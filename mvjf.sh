@@ -42,7 +42,8 @@ LIST_FILE="mvjf.list"
 
 # リストファイルが存在しない場合は作成
 if [ ! -f "$LIST_FILE" ]; then
-    touch "$LIST_FILE"
+    touch 
+    echo "#番組フォルダ名として優先される番組名のリスト。不完全ならば手動で修正する。" > "$LIST_FILE"
 fi
 
 # 区切り文字の優先順位リスト
