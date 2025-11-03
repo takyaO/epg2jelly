@@ -216,6 +216,31 @@ function checkLibaribb24Availability() {
     }
 }
 
+// libfdk_aacの利用可能性をチェック
+function checkLibfdkAacAvailability() {
+    try {
+        // エンコーダーリストを確認
+        const encodersOptions = ['-encoders'];
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
+        const hasLibfdkAac = encodersResult.includes('libfdk_aac') && encodersResult.includes('AAC');
+        
+        console.log(`libfdk_aac detection - Encoders: ${hasLibfdkAac}`);
+        
+        return hasLibfdkAac;
+    } catch (error) {
+        console.error('Error checking libfdk_aac availability:', error.message);
+        return false;
+    }
+}
+
+// 利用可能な音声コーデックを決定
+function getAudioCodec() {
+    const hasLibfdkAac = checkLibfdkAacAvailability();
+    const audioCodec = hasLibfdkAac ? 'libfdk_aac' : 'aac';
+    console.log(`Using audio codec: ${audioCodec}`);
+    return audioCodec;
+}
+
 // メイン処理
 (() => {
     // デバッグモードを有効にする
@@ -245,11 +270,13 @@ function checkLibaribb24Availability() {
         useCodecPostArgs.push('-global_quality', '20');
     }
 
-
+    // 音声コーデックを決定
+    const audioCodec = getAudioCodec();
+    
     // 字幕設定 - libaribb24の可用性をチェックしてから取得
     const hasLibaribb24 = checkLibaribb24Availability();
     const sub = getSubTitlesArg(hasLibaribb24);
-    const audio = getAudioArgs();
+    const audio = getAudioArgs(audioCodec);
     
     // 固定で3秒カット
     const cutSecond = fixedCutSecond;
@@ -355,7 +382,8 @@ function checkLibaribb24Availability() {
             averageSpeed: duration > 0 ? Math.floor(duration / elapsed) + 'x' : 'N/A',
             useCodec, cutSecond,
             subtitlesIncluded: hasValidSubtitles,
-            metadataIncluded: metadataArgs.length > 0
+            metadataIncluded: metadataArgs.length > 0,
+            audioCodec: audioCodec
         };
         
         if (isError) {
@@ -526,7 +554,7 @@ function getActualAudioStreamIndices() {
 }
 
 // 音声の設定を取得する関数
-function getAudioArgs() {
+function getAudioArgs(audioCodec) {
     const fileName = getEnv('NAME');
     const audioComponentType = parseInt(getEnv('AUDIOCOMPONENTTYPE'), 10);
     const isDualMono = audioComponentType == 2;
@@ -535,7 +563,7 @@ function getAudioArgs() {
     const isMultiAudio = /\[多\]/.test(fileName);
     const args = [];
     
-    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 'isBilingual:', isBilingual, 'isExplanation:', isExplanation);
+    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 'isBilingual:', isBilingual, 'isExplanation:', isExplanation, 'audioCodec:', audioCodec);
 
     // 実際の音声ストリームインデックスを取得
     let actualAudioIndices = getActualAudioStreamIndices();
@@ -562,9 +590,8 @@ function getAudioArgs() {
         // メタデータ設定（日本語→英語の順序）
         args.push('-metadata:s:a:0', 'language=jpn');
         args.push('-metadata:s:a:1', 'language=eng');
-        // 音声コーデック設定
-//        args.push('-c:a', 'libfdk_aac');
-        args.push('-c:a', 'aac');
+        // 音声コーデック設定（選択されたコーデックを使用）
+        args.push('-c:a', audioCodec);
         args.push('-b:a:0', '192k');
         args.push('-b:a:1', '192k');
         args.push('-ac:0', '1');
@@ -596,9 +623,8 @@ function getAudioArgs() {
         args.push(`-metadata:s:a:${index}`, `language=${lang}`);
     }
 
-    // 音声エンコード設定
-//    args.push('-c:a', 'libfdk_aac');
-    args.push('-c:a', 'aac');
+    // 音声エンコード設定（選択されたコーデックを使用）
+    args.push('-c:a', audioCodec);
     args.push('-b:a', '192k');
     args.push('-ac', '2');
 
