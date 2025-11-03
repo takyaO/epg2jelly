@@ -42,7 +42,6 @@ LIST_FILE="mvjf.list"
 
 # リストファイルが存在しない場合は作成
 if [ ! -f "$LIST_FILE" ]; then
-    touch 
     echo "#番組フォルダ名として優先される番組名のリスト。不完全ならば手動で修正する。" > "$LIST_FILE"
 fi
 
@@ -213,4 +212,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2025/11/03
+#Time stamp: 2025/11/04

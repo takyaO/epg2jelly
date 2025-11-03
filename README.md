@@ -20,7 +20,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 ## インストール手順
 
-1. docker-mirakurun-epgstation/epgstation/config/config.ymlのrecordedFormat を '%TITLE' に変更
+1. docker-mirakurun-epgstation/epgstation/config/config.ymlのrecordedFormat を '%TITLE%' が先頭になるように変更
 2. git clone https://github.com/takyaO/epg2jelly.git ファイル一式を~/work/  にコピー
 3. 設定ファイルenv.shを確認の上で encode.shの動作を確認
 4. cronに登録
