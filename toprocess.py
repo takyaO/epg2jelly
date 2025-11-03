@@ -5,8 +5,9 @@ import os
 import glob
 import time
 
-# 処理済み番組名ファイル（固定）
-PROCESSED_FILE = os.path.expanduser("~") + "/work/processed_filenames.json"
+# 処理済み番組名ファイル
+WORKDIR = os.environ.get('WORKDIR', os.path.expanduser("~") + "/work")
+PROCESSED_FILE = os.path.join(WORKDIR, "processed_filenames.json")
 
 # サーバーモード用の設定 - 環境変数から取得、未設定時はデフォルト値
 EPGSTATION_URL = os.environ.get('EPGSTATION_URL', 'http://localhost:8888')

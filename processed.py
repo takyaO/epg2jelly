@@ -3,8 +3,9 @@ import requests
 import json
 import os
 
-# 処理済み番組名ファイル（固定）
-PROCESSED_FILE = os.path.expanduser("~") + "/work/processed_filenames.json"
+# 処理済み番組名ファイル
+WORKDIR = os.environ.get('WORKDIR', os.path.expanduser("~") + "/work")
+PROCESSED_FILE = os.path.join(WORKDIR, "processed_filenames.json")
 
 def load_processed_filenames():
     """ローカルから処理済みのファイル名を読み込む"""
