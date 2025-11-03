@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-#set -euo pipefail
 IFS=$'\n\t'
 
+# libfdk_aacの利用可否をチェック
+if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
+    audio_codec="libfdk_aac"
+else
+    audio_codec="aac"
+fi
 #ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -c:a libfdk_aac -b:a 192k)
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -c:a "$audio_codec" -b:a 192k)
 
 # --- 環境変数のロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -135,37 +140,90 @@ jls() {
     local filename="$1"
     local output_file="$2"
 
+    # 引数チェック
     if [[ -z "$filename" || -z "$output_file" ]]; then
         echo "Usage: jls FILENAME OUTPUT_FILE" >&2
         return 1
     fi
 
+    # 入力ファイルの存在チェック
+    if [[ ! -f "$filename" ]]; then
+        echo "Error: Input file '$filename' not found" >&2
+        return 1
+    fi
+
+    # 必要なコマンドの存在チェック
+    local required_commands=("ffmpeg" "chapter_exe" "logoframe" "join_logo_scp")
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            echo "Error: Required command '$cmd' not found in PATH" >&2
+            return 1
+        fi
+    done
+
+    # 必要なファイルの存在チェック
+    if [[ ! -f "JL_標準.txt" ]]; then
+        echo "Error: Required file 'JL_標準.txt' not found in current directory" >&2
+        return 1
+    fi
+
     local avs_file="join.avs"
+    
+    # avsファイルの作成
     cat > "$avs_file" << EOF
 TSFilePath="$filename"
 LWLibavVideoSource(TSFilePath, repeat=true, dominance=1)
 AudioDub(last,LWLibavAudioSource(TSFilePath, av_sync=true))
 EOF
 
+    # chapter_exeの実行（タイムアウト付き）
     timeout -k 60 1800 chapter_exe -v "$avs_file" -o chap_out.txt || {
-        echo "chapter_exe failed" >&2
+        echo "chapter_exe failed or timed out" >&2
         return 1
     }
 
-    if [ ! -f "$GRSTRING.lgd" ]; then
-        echo "Error: $GRSTRING.lgd is not found" >&2
+    # チャプターファイルの存在チェック
+    if [[ ! -f "chap_out.txt" ]]; then
+        echo "Error: Chapter output file 'chap_out.txt' was not created" >&2
         return 1
     fi
 
-    logoframe "$avs_file" -logo "$GRSTRING.lgd" -oa lf_out.txt || {
-        echo "logoframe failed" >&2
-        return 1
-    }
+    # lgdファイルの存在チェック（条件付き）
+    if [[ -n "$GRSTRING" && ! -f "$GRSTRING.lgd" ]]; then
+        echo "Warning: $GRSTRING.lgd not found, but continuing..." >&2
+        # エラーにしないで続行
+    fi
 
+    # logoframeの実行（lgdファイルが存在する場合のみ）
+    if [[ -n "$GRSTRING" && -f "$GRSTRING.lgd" ]]; then
+        logoframe "$avs_file" -logo "$GRSTRING.lgd" -oa lf_out.txt || {
+            echo "logoframe failed" >&2
+            return 1
+        }
+    else
+        # lgdファイルがない場合は空のファイルを作成
+        echo ""> lf_out.txt
+    fi
+
+    # ロゴファイルの存在チェック
+    if [[ ! -f "lf_out.txt" ]]; then
+        echo "Error: Logo frame output file 'lf_out.txt' was not created" >&2
+        return 1
+    fi
+
+    # join_logo_scpの実行
     join_logo_scp -inlogo lf_out.txt -inscp chap_out.txt -incmd JL_標準.txt -o "$output_file" || {
         echo "join_logo_scp failed" >&2
         return 1
     }
+
+    # 出力ファイルの存在チェック
+    if [[ ! -f "$output_file" ]]; then
+        echo "Error: Output file '$output_file' was not created" >&2
+        return 1
+    fi
+
+    echo "Successfully created: $output_file"
 }
 
 # --- メイン処理 ---
@@ -224,4 +282,4 @@ EOF
     fi
 done
 
-#Time stamp: 2025/11/02
+#Time stamp: 2025/11/03
