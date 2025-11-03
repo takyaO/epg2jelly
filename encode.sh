@@ -19,6 +19,7 @@ TOPROCESS="$WORKDIR/toprocess.py"
 STATS_FILE="${WORKDIR}/.encode_stats.dat"
 INITIAL_MINGB=10 # mingb (1GBあたり何分かかるか)の初期値: 10GB/min
 MIN_GBS=1.0    # 1GB未満は統計に反映しない
+MIN_MINS=1.0    # 1分未満は統計に反映しない
 
 DEFERRAL_FILE="$WORKDIR/$(basename "$0").deferrals"
 MAX_DEFERRALS=10
@@ -92,8 +93,6 @@ else
         prev_mingb=$INITIAL_MINGB
     fi
     mingb=$prev_mingb
-    echo "Starting encode with mingb=$mingb"
-    echo "speed = $(echo "scale=2; 10/$mingb" | bc)"
     
     # 未処理ファイルの合計サイズを計算
     gbs=$(calculate_total_size)
@@ -111,15 +110,12 @@ else
 	    end_time=$(date +%s)
 	    duration=$((end_time - start_time))
 	    mins=$((duration / 60))
-	    # === Handle small files ===
-	    if (( $(echo "$gbs <= $MIN_GBS" | bc -l) )); then
-		echo "File size ${gbs}GB ≤ ${MIN_GBS}GB → Skipping stats update"
-		echo "Run skipped: gbs=$gbs, mins=$mins" >> "${STATS_FILE}.log"
-	    fi
 
 	    # === Record current result ===
-	    run_id=$(( $(wc -l < "$STATS_FILE" 2>/dev/null || echo 0) + 1 ))
-	    echo "$run_id,$gbs,$mins,$mingb" >> "$STATS_FILE"
+	    if (( $(echo "$gbs >= $MIN_GBS && $mins >= $MIN_MINS" | bc -l) )); then
+		run_id=$(( $(wc -l < "$STATS_FILE" 2>/dev/null || echo 0) + 1 ))
+		echo "$run_id,$gbs,$mins,$mingb" >> "$STATS_FILE"
+	    fi
 
 	    if [ -f "$DEFERRAL_FILE" ]; then
 		rm  "$DEFERRAL_FILE"
