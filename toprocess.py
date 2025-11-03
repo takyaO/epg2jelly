@@ -150,14 +150,18 @@ def main():
             print(f"Error: Watch folder '{watchdir}' does not exist.")
             return
             
+        print(f"Folder watch mode: monitoring {watchdir}")  # デバッグ用
         unprocessed_filenames = get_unprocessed_filenames_folder(processed_filenames, watchdir)
     else:
         # サーバー監視モード (デフォルト)
+        print("Server watch mode: using EPGStation API")  # デバッグ用
         unprocessed_filenames = get_unprocessed_filenames_server(processed_filenames)
     
     if unprocessed_filenames:
         for filename in unprocessed_filenames:
             print(filename)
+    else:
+        print("No unprocessed files found.")
 
 if __name__ == '__main__':
     main()
