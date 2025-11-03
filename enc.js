@@ -193,6 +193,29 @@ function getEnv(variableName) {
     return envs[variableName];
 }
 
+// libaribb24の利用可能性をチェック
+function checkLibaribb24Availability() {
+    try {
+        // 方法1: ffmpegのビルド設定を確認
+        const buildconfOptions = ['-buildconf'];
+        const buildconfResult = execFileSync(getEnv('FFMPEG'), buildconfOptions, { encoding: 'utf8' });
+        const hasInBuildconf = buildconfResult.includes('--enable-libaribb24');
+        
+        // 方法2: コーデックリストを確認
+        const codecsOptions = ['-codecs'];
+        const codecsResult = execFileSync(getEnv('FFMPEG'), codecsOptions, { encoding: 'utf8' });
+        const hasInCodecs = codecsResult.includes('arib_caption') && codecsResult.includes('DECODER') && codecsResult.includes('libaribb24');
+        
+        console.log(`libaribb24 detection - Buildconf: ${hasInBuildconf}, Codecs: ${hasInCodecs}`);
+        
+        // どちらかで検出されたら利用可能と判断
+        return hasInBuildconf || hasInCodecs;
+    } catch (error) {
+        console.error('Error checking libaribb24 availability:', error.message);
+        return false;
+    }
+}
+
 // メイン処理
 (() => {
     // デバッグモードを有効にする
@@ -223,8 +246,9 @@ function getEnv(variableName) {
     }
 
 
-    // 字幕設定
-    const sub = getSubTitlesArg();
+    // 字幕設定 - libaribb24の可用性をチェックしてから取得
+    const hasLibaribb24 = checkLibaribb24Availability();
+    const sub = getSubTitlesArg(hasLibaribb24);
     const audio = getAudioArgs();
     
     // 固定で3秒カット
@@ -237,7 +261,9 @@ function getEnv(variableName) {
     // メタデータ引数の準備
     const metadataArgs = [];
     if (metadataDescription) {
-        metadataArgs.push('-metadata', `description=${metadataDescription}`);
+        // メタデータの改行をスペースに置換して問題を回避
+        const cleanDescription = metadataDescription.replace(/\n/g, ' ');
+        metadataArgs.push('-metadata', `description=${cleanDescription}`);
     }
     if (metadataTitle) {
         metadataArgs.push('-metadata', `title=${metadataTitle}`);
@@ -388,74 +414,49 @@ function detectAllSubtitleStreams() {
 }
 
 // 字幕の設定を取得
-function getSubTitlesArg() {
+function getSubTitlesArg(hasLibaribb24) {
     const fix = [];
     const map = [];
     const fileName = getEnv('NAME');
     const isSub = /\[字\]/.test(fileName);
 
-    console.log('Subtitle detection:', { fileName, isSub });
+    console.log('Subtitle detection:', { fileName, isSub, hasLibaribb24 });
 
     // [字]がある場合のみ字幕処理を実行
     if (isSub) {
-        // libaribb24が利用可能かチェック
-        const hasLibaribb24 = checkLibaribb24Availability();
-        
         if (hasLibaribb24) {
             fix.push('-fix_sub_duration');
             console.log('libaribb24 is available, using -fix_sub_duration');
-        } else {
-            console.log('libaribb24 is not available, will try without special subtitle processing');
-        }
-        
-        // 複数の方法で字幕ストリームを検出
-        const subtitleStreams = detectAllSubtitleStreams();
-        console.log('All detected subtitle streams:', subtitleStreams);
-        
-        if (subtitleStreams.length > 0) {
-            // 検出されたすべての字幕ストリームをマップ
-            for (let i = 0; i < subtitleStreams.length; i++) {
-                map.push('-map', `0:${subtitleStreams[i]}?`);
-                map.push(`-c:s:${i}`, 'mov_text');
-                map.push(`-metadata:s:${i}`, 'language=jpn');
-            }
-            console.log('Mapped subtitle streams:', map);
-        } else {
-            console.log('No subtitle streams found, trying fallback method');
             
-            // フォールバック: すべての字幕ストリームをマップ
-            map.push('-map', '0:s?');
-            map.push('-c:s', 'mov_text');
-            map.push('-metadata:s:0', 'language=jpn');
+            // 複数の方法で字幕ストリームを検出
+            const subtitleStreams = detectAllSubtitleStreams();
+            console.log('All detected subtitle streams:', subtitleStreams);
+            
+            if (subtitleStreams.length > 0) {
+                // 検出されたすべての字幕ストリームをマップ
+                for (let i = 0; i < subtitleStreams.length; i++) {
+                    map.push('-map', `0:${subtitleStreams[i]}?`);
+                    map.push(`-c:s:${i}`, 'mov_text');
+                    map.push(`-metadata:s:${i}`, 'language=jpn');
+                }
+                console.log('Mapped subtitle streams:', map);
+            } else {
+                console.log('No subtitle streams found, trying fallback method');
+                
+                // フォールバック: すべての字幕ストリームをマップ
+                map.push('-map', '0:s?');
+                map.push('-c:s', 'mov_text');
+                map.push('-metadata:s:0', 'language=jpn');
+            }
+        } else {
+            console.log('libaribb24 is not available, skipping subtitle mapping to avoid errors');
+            // libaribb24がない場合は字幕ストリームをマップしない
         }
     } else {
         console.log('No [字] tag in filename, skipping subtitle processing');
     }
 
     return { fix: fix, map: map, isSub: isSub };
-}
-
-// libaribb24の利用可能性をチェック
-function checkLibaribb24Availability() {
-    try {
-        // 方法1: ffmpegのビルド設定を確認
-        const buildconfOptions = ['-buildconf'];
-        const buildconfResult = execFileSync(getEnv('FFMPEG'), buildconfOptions, { encoding: 'utf8' });
-        const hasInBuildconf = buildconfResult.includes('--enable-libaribb24');
-        
-        // 方法2: コーデックリストを確認
-        const codecsOptions = ['-codecs'];
-        const codecsResult = execFileSync(getEnv('FFMPEG'), codecsOptions, { encoding: 'utf8' });
-        const hasInCodecs = codecsResult.includes('arib_caption') && codecsResult.includes('libaribb24');
-        
-        console.log(`libaribb24 detection - Buildconf: ${hasInBuildconf}, Codecs: ${hasInCodecs}`);
-        
-        // どちらかで検出されたら利用可能と判断
-        return hasInBuildconf || hasInCodecs;
-    } catch (error) {
-        console.error('Error checking libaribb24 availability:', error.message);
-        return false;
-    }
 }
 
 // 補助関数
@@ -642,4 +643,4 @@ function debugAllStreams() {
 }
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/02
+// Time stamp: 2025/11/03
