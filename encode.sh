@@ -46,14 +46,14 @@ calculate_total_size() {
     local total_bytes=0
     # ファイルのベースディレクトリを決定
     local base_dir=""
-    if [ -n "$WATCHDIR" ]; then
-        base_dir="$WATCHDIR"
-    elif [ -n "$SOURCEDIR" ]; then
+
+    if [ -n "$SOURCEDIR" ]; then
         base_dir="$SOURCEDIR"
     else
-        echo "Error: Neither WATCHDIR nor SOURCEDIR is set in env.sh"
+        echo "Error: SOURCEDIR is not set in env.sh"
         return 1
     fi
+
     # 未処理ファイルのリストを取得し、各ファイルのサイズを計算
     while IFS= read -r filename; do
         file_path="$base_dir/$filename"
@@ -70,7 +70,7 @@ calculate_total_size() {
 }
 
 # --- メイン処理 ---
-if [ -v WATCHDIR ]; then
+if [ "$WATCHDIR" = "true" ]; then
     # ディレクトリ監視型
     "$SCRIPT"
 else

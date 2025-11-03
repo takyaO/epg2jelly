@@ -36,7 +36,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 以下の連載の構築の一部を、修正してまとめたものです。詳細や拡張機能（オプション）については、記事を参照してください。
 
 
-### 索引
+### テレビ録画メディアサーバー構築入門：索引
 
 過去回の概要一覧
 

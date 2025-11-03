@@ -139,22 +139,27 @@ def get_unprocessed_filenames_server(processed_filenames):
 
 # ===== メイン処理 =====
 def main():
-    # 環境変数 WATCHDIR でモードを判定
-    watchdir = os.environ.get('WATCHDIR', '').strip()
+    # 環境変数 WATCHDIR でモードを判定（true/false）
+    watchdir_mode = os.environ.get('WATCHDIR', '').strip().lower()
     
     processed_filenames = load_processed_filenames()
     
-    if watchdir:
-        # フォルダ監視モード
-        if not os.path.exists(watchdir):
-            print(f"Error: Watch folder '{watchdir}' does not exist.")
+    if watchdir_mode == 'true':
+        # フォルダ監視モード - SOURCEDIRを使用
+        sourcedir = os.environ.get('SOURCEDIR', '').strip()
+        if not sourcedir:
+            print("Error: SOURCEDIR environment variable is not set.")
             return
             
-        print(f"Folder watch mode: monitoring {watchdir}")  # デバッグ用
-        unprocessed_filenames = get_unprocessed_filenames_folder(processed_filenames, watchdir)
+        if not os.path.exists(sourcedir):
+            print(f"Error: Source folder '{sourcedir}' does not exist.")
+            return
+            
+        print(f"Folder watch mode: monitoring {sourcedir}")
+        unprocessed_filenames = get_unprocessed_filenames_folder(processed_filenames, sourcedir)
     else:
         # サーバー監視モード (デフォルト)
-        print("Server watch mode: using EPGStation API")  # デバッグ用
+        print("Server watch mode: using EPGStation API")
         unprocessed_filenames = get_unprocessed_filenames_server(processed_filenames)
     
     if unprocessed_filenames:
@@ -165,5 +170,5 @@ def main():
 
 if __name__ == '__main__':
     main()
-
+    
 #Time stamp: 2025/11/03
