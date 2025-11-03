@@ -37,6 +37,14 @@ if [ "$DRY_RUN" = "false" ]; then
     fi
 fi
 
+# 優先する番組名リストを記したファイルのパス（必要ならば手で編集する）
+LIST_FILE="mvjf.list"
+
+# リストファイルが存在しない場合は作成
+if [ ! -f "$LIST_FILE" ]; then
+    touch "$LIST_FILE"
+fi
+
 # 区切り文字の優先順位リスト
 delimiter_order=("＃" "♯" "#" "第" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『" " "  "　"  "_" "[")
 # 優先順序: "【"  or "　"
@@ -151,16 +159,27 @@ fi
 
 EPISODE=$(echo "$EPISODE" | sed -e 's/\[[^]]*\]//g' -e 's/__.*$//' )  # [字] 削除
 
-#確認
-echo "delimiter: '$delimiter'"
-echo "PROGRAM: $PROGRAM"
-echo "EPISODE: $EPISODE"
-
 #却下するPROGRAM名
 MATCH_LIST=("アニメ" "プチプチ・アニメ" "ミニアニメ")
 if [ -z "$PROGRAM" ]  || [[ " ${MATCH_LIST[@]} " =~ " ${PROGRAM} " ]]; then
     PROGRAM=$EPISODE
 fi
+
+# リストファイルから既存のフォルダ名を検索（上から順に）
+matched_folder="$PROGRAM"
+if [ -f "$LIST_FILE" ]; then
+    while IFS= read -r existing; do
+        if [[ -n "$existing" ]]; then
+            # 部分一致チェック：新しいフォルダ名が既存の文字列を含む、または既存の文字列が新しいフォルダ名を含む
+            if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
+                matched_folder="$existing"
+                break  # 最初に見つかったものを使う
+            fi
+        fi
+    done < "$LIST_FILE"
+fi
+
+PROGRAM="$matched_folder"
 
 # 最終的なディレクトリパス
 #final_dir="$outdir/$PROGRAM/$EPISODE"
@@ -169,6 +188,7 @@ final_dir="$outdir/$PROGRAM"
 if [ "$DRY_RUN" = "true" ]; then
    # ドライランモードの場合、移動操作を行わない
    echo "Dry run mode: $final_dir/$(basename "$input_file")"
+   echo "Using folder name: $PROGRAM"
 else
     # ディレクトリを作成（存在しない場合のみ）
     mkdir -p "$final_dir" || {
@@ -181,7 +201,15 @@ else
 	exit 1
     }
     echo "ファイルが正常に移動されました: $final_dir/$(basename "$input_file")"
+    
+    # リストファイルにフォルダ名が存在しない場合のみ追加
+    if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
+        echo "$PROGRAM" >> "$LIST_FILE"
+        echo "フォルダ名をリストファイルに追加しました: $PROGRAM"
+    else
+        echo "フォルダ名は既にリストファイルに存在します: $PROGRAM"
+    fi
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2025/10/27
+#Time stamp: 2025/11/03
