@@ -16,13 +16,14 @@ SCRIPT="$WORKDIR/enc01.sh" # 実行スクリプト
 LOCKFILE="/tmp/encode.lock"
 TOPROCESS="$WORKDIR/toprocess.py"
 
-STATS_FILE="${WORKDIR}/.encode_stats.dat"
+STATS_FILE="${WORKDIR}/.encode_stats.dat" #処理記録を残して予測に使用
 INITIAL_MINGB=10 # mingb (1GBあたり何分かかるか)の初期値: 10GB/min
 MIN_GBS=1.0    # 1GB未満は統計に反映しない
 MIN_MINS=1.0    # 1分未満は統計に反映しない
 
 DEFERRAL_FILE="$WORKDIR/$(basename "$0").deferrals"
-MAX_DEFERRALS=10
+MAX_DEFERRALS=10 # 最大延期回数：10回まで延期を許す
+#処理が録画に追いつかないとバックログが貯まり続けるので要手動対応
 
 # --- ロックファイルチェック ---
 if [ -f "$LOCKFILE" ]; then
@@ -35,7 +36,7 @@ touch "$LOCKFILE"
 deferral_count=$(cat "$DEFERRAL_FILE" 2>/dev/null || echo "0")
 # 最大延期回数チェック
 if [[ $deferral_count -ge $MAX_DEFERRALS ]]; then
-    echo "WARNING: 最大延期回数($MAX_DEFERRALS)を超えました" >&2
+    echo "WARNING: Maximum Number of Deferrals Exceeded ($MAX_DEFERRALS)" >&2
     if [ -v NTFY_URL ]; then
 	curl -H "X-Priority: 3" -d "WARNING: $WORKDIR/$(basename "$0")  最大延期回数($MAX_DEFERRALS)を超えました" "$NTFY_URL"
     fi
@@ -97,7 +98,7 @@ else
     # 未処理ファイルの合計サイズを計算
     gbs=$(calculate_total_size)
     # エンコードにかかる必要時間（分）: 有効２桁で計算
-    mins_toencode=$(echo "scale=2; $gbs*$mingb*1.1" | bc) #1割の余裕をもたせておく
+    mins_toencode=$(echo "scale=2; $gbs*$mingb*1.1" | bc) #1割の余裕をもたせる
     # 録画中件数
     count=$(echo $(curl -s "${EPGSTATION_URL}api/recording?isHalfWidth=false") | rev | cut -c 2-2 | rev)
     if [ "$count" = "0" ]; then
@@ -121,11 +122,11 @@ else
 		rm  "$DEFERRAL_FILE"
 	    fi
 	else
-	    # 時間が足りない場合: 延期処理
+	    # 時間が足りない場合は 延期処理
 	    new_count=$((deferral_count + 1))
 	    echo "$new_count" > "$DEFERRAL_FILE"
 	    echo "WARNING: No enough time to encode until the next recording"
-	    echo "処理延期 (連続回数: $new_count/$MAX_DEFERRALS)"
+	    echo "Deferred ($new_count/$MAX_DEFERRALS)"
 	fi
     fi
 fi
