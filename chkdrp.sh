@@ -43,7 +43,7 @@ notify() {
 }
 
 if (( COUNT_AUDIO > 5 )); then
-    notify 5 "AUDIO ERRORS in $BASENAME ($COUNT_AUDIO)"
+    notify 4 "AUDIO ERRORS in $BASENAME ($COUNT_AUDIO)"
 elif (( COUNT_VIDEO > 5 )); then
     notify 4 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
 elif (( COUNT_TS > 5 )); then
