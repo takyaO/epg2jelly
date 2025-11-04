@@ -1,23 +1,25 @@
 #!/usr/bin/env bash
 IFS=$'\n\t'
 
-# libfdk_aacの利用可否をチェック
+#ffmpeg のオプション
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -b:a 192k)
+
+# オーディオコーデックを追加
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
     audio_codec="libfdk_aac"
 else
     audio_codec="aac"
 fi
-#ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -c:a "$audio_codec" -b:a 192k)
+FFMPEG_OPTS+=(-c:a "$audio_codec")
 
-# --- 環境変数のロード ---
+# --- 環境変数をロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/env.sh"
 
 if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 else
-  echo "環境設定ファイルが見つかりません: $ENV_FILE" >&2
+  echo "Not found: $ENV_FILE" >&2
   exit 1
 fi
 
@@ -281,5 +283,3 @@ EOF
         ./processed.py "$FILE" || true
     fi
 done
-
-#Time stamp: 2025/11/03
