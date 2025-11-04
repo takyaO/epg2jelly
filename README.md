@@ -4,7 +4,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 **テレビ録画管理サーバー EPGStation** と **Jellyfin** などのメディアサーバーとの連携を支援するツールです。
 
-録画時間外に、自動で、**地デジ録画（m2ts形式）を mp4形式に変換**し、
+録画をしていない時間帯に、自動で、**地デジ録画（m2ts形式）を mp4形式に変換**し、
 
 メディアサーバー管理下のフォルダに**階層構造で配置**します。
 

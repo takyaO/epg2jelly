@@ -1,10 +1,9 @@
 #!/bin/bash
-# --- chkdrp.sh : M2TSエラーチェック＆通知 ---
+# --- chkdrp.sh : M2TS/TSファイルの破損検査 ---
 # 使い方: ./chkdrp.sh input.m2ts
 
 set -euo pipefail
 
-# --- 環境変数のロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/env.sh"
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
@@ -12,37 +11,47 @@ ENV_FILE="$SCRIPT_DIR/env.sh"
 INPUT="$1"
 BASENAME=$(basename "$INPUT")
 
-# --- 一時ログファイル ---
-LOG_ERR=$(mktemp /tmp/chkdrp.err.XXXXXX.log)
-LOG_WARN=$(mktemp /tmp/chkdrp.warn.XXXXXX.log)
+# --- 一時ログ ---
+LOG=$(mktemp /tmp/chkdrp.XXXXXX.log)
 
-# --- ffmpegでログ取得 ---
-ffmpeg -v error   -i "$INPUT" -f null - 2> "$LOG_ERR"   || true
-ffmpeg -v warning -i "$INPUT" -f null - 2> "$LOG_WARN"  || true
+# --- ffmpegログ収集（error以上をすべて）---
+ffmpeg -v error -i "$INPUT" -f null - 2> "$LOG" || true
+# warningレベルも追記
+ffmpeg -v warning -i "$INPUT" -f null - 2>> "$LOG" || true
 
-# --- 解析 ---
-ERR_COUNT=$(grep -i "error" "$LOG_ERR" | wc -l)
-CORRUPT_COUNT=$(grep -Ei "corrupt|timestamp|non[- ]monotone|invalid" "$LOG_WARN" | wc -l)
+# --- カテゴリ別カウント ---
+COUNT_AUDIO=$(grep -Ei "aac|audio|channel element|submitting packet to decoder" "$LOG" | wc -l)
+COUNT_VIDEO=$(grep -Ei "mpeg2video|vist|vdec|invalid mb type|motion_type|ac-tex|Warning MVs|corrupt decoded frame" "$LOG" | wc -l)
+COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|invalid dts|invalid pts|timestamp" "$LOG" | wc -l)
+COUNT_TOTAL=$(grep -i "error" "$LOG" | wc -l)
 
-# --- ログ要約 ---
+# --- 要約 ---
 SUMMARY="File: $BASENAME
-Error count: $ERR_COUNT
-Corrupt count: $CORRUPT_COUNT"
+Audio: $COUNT_AUDIO
+Video: $COUNT_VIDEO
+TS: $COUNT_TS
+Total: $COUNT_TOTAL"
 
-# --- 判定と通知 ---
-if (( ERR_COUNT > 5 )); then
-    echo "AUDIO ERROR: $SUMMARY"
+# --- 判定 ---
+notify() {
+    local LEVEL="$1"
+    local MSG="$2"
+    echo "$MSG"
     if [ -v NTFY_URL ]; then
-        curl -H "X-Priority: 5" -d "AUDIO ERROR detected in $BASENAME ($ERR_COUNT errors)" "$NTFY_URL"
+        curl -H "X-Priority: $LEVEL" -d "$MSG" "$NTFY_URL" >/dev/null 2>&1 || true
     fi
-elif (( CORRUPT_COUNT > 5 )); then
-    echo "CORRUPT: $SUMMARY"
-    if [ -v NTFY_URL ]; then
-        curl -H "X-Priority: 4" -d "CORRUPT packets in $BASENAME ($CORRUPT_COUNT warnings)" "$NTFY_URL"
-    fi
+}
+
+if (( COUNT_AUDIO > 5 )); then
+    notify 5 "AUDIO ERRORS in $BASENAME ($COUNT_AUDIO)"
+elif (( COUNT_VIDEO > 5 )); then
+    notify 4 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
+elif (( COUNT_TS > 5 )); then
+    notify 3 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
+elif (( COUNT_TOTAL > 0 )); then
+    echo "Minor issues detected in $BASENAME ($COUNT_TOTAL)"
 else
-    echo "OK: $SUMMARY"
+    echo "OK: $BASENAME"
 fi
 
-# --- 後片付け ---
-rm -f "$LOG_ERR" "$LOG_WARN"
+rm -f "$LOG"
