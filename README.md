@@ -29,7 +29,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 ## 動作イメージ（ショート動画）
 
-[![自家製ネットフリックス](https://img.youtube.com/vi/5582veqBuvs/0.jpg)](https://youtube.com/shorts/5582veqBuvs)
+[自家製ネットフリックス](https://youtube.com/shorts/5582veqBuvs)
 
 ## 解説記事
 
