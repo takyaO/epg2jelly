@@ -14,9 +14,9 @@ Supports the integration of the TV recording management server, EPGStation, with
    
 　　https://github.com/l3tnun/docker-mirakurun-epgstation
   
-2. **ffmpeg**など、標準的なパッケージ
+2. **ffmpeg**やjqなど、標準的なパッケージ
    
-　　sudo apt install ffmpeg curl jq bc python3-pip
+　　sudo apt install ffmpeg jq
 
 ## インストール手順
 
