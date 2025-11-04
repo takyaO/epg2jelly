@@ -10,7 +10,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 ## 動作要件
 
-1. ** EPGStation** 
+1. **EPGStation** 
    
 　　[l3tnun/docker-mirakurun-epgstation](https://github.com/l3tnun/docker-mirakurun-epgstation)
   
