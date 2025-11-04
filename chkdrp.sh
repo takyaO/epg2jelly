@@ -1,29 +1,48 @@
 #!/bin/bash
+# --- chkdrp.sh : M2TSエラーチェック＆通知 ---
+# 使い方: ./chkdrp.sh input.m2ts
+
+set -euo pipefail
 
 # --- 環境変数のロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/env.sh"
+[ -f "$ENV_FILE" ] && source "$ENV_FILE"
 
-LOGFILE="/tmp/chkdrp.log"
-LOG_PATTERN="error"
+INPUT="$1"
+BASENAME=$(basename "$INPUT")
 
-ffmpeg -v error -i "$1" -f null - 2> $LOGFILE
-OUTPUT=$( grep "$LOG_PATTERN" $LOGFILE|tail) # LOG_PATTERN="error" だけ調べる
-#OUTPUT=$( grep -i "$LOG_PATTERN" $LOGFILE|tail) # 大文字小文字区別しない
+# --- 一時ログファイル ---
+LOG_ERR=$(mktemp /tmp/chkdrp.err.XXXXXX.log)
+LOG_WARN=$(mktemp /tmp/chkdrp.warn.XXXXXX.log)
 
-if [ -n "$OUTPUT" ]; then
-    echo "ERROR: DROP $1 $OUTPUT"
+# --- ffmpegでログ取得 ---
+ffmpeg -v error   -i "$INPUT" -f null - 2> "$LOG_ERR"   || true
+ffmpeg -v warning -i "$INPUT" -f null - 2> "$LOG_WARN"  || true
+
+# --- 解析 ---
+ERR_COUNT=$(grep -i "error" "$LOG_ERR" | wc -l)
+CORRUPT_COUNT=$(grep -Ei "corrupt|timestamp|non[- ]monotone|invalid" "$LOG_WARN" | wc -l)
+
+# --- ログ要約 ---
+SUMMARY="File: $BASENAME
+Error count: $ERR_COUNT
+Corrupt count: $CORRUPT_COUNT"
+
+# --- 判定と通知 ---
+if (( ERR_COUNT > 5 )); then
+    echo "AUDIO ERROR: $SUMMARY"
     if [ -v NTFY_URL ]; then
-	curl -H "X-Priority: 4" -d "ERROR: DROP $1 $OUTPUT" $NTFY_URL
+        curl -H "X-Priority: 5" -d "AUDIO ERROR detected in $BASENAME ($ERR_COUNT errors)" "$NTFY_URL"
     fi
+elif (( CORRUPT_COUNT > 5 )); then
+    echo "CORRUPT: $SUMMARY"
+    if [ -v NTFY_URL ]; then
+        curl -H "X-Priority: 4" -d "CORRUPT packets in $BASENAME ($CORRUPT_COUNT warnings)" "$NTFY_URL"
+    fi
+else
+    echo "OK: $SUMMARY"
 fi
 
-ffmpeg -v warning -i "$1" -f null - 2> $LOGFILE
-OUTPUT=$( grep -Eq "non[- ]monotone|Invalid DTS|invalid PTS|corrupt|Packet corrupt|timestamp" $LOGFILE|tail)
-if [ -n "$OUTPUT" ]; then
-    echo "ERROR: CORRUPT $1 $OUTPUT"
-    if [ -v NTFY_URL ]; then
-	curl -H "X-Priority: 4" -d "ERROR: CORRUPT $1 $OUTPUT" $NTFY_URL
-    fi
-    exit 1
-fi
+# --- 後片付け ---
+rm -f "$LOG_ERR" "$LOG_WARN"
