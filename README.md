@@ -10,7 +10,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 ## 動作要件
 
-1. **Mirakurun / EPGStation** の Docker コンテナ
+1. ** EPGStation** 
    
 　　[l3tnun/docker-mirakurun-epgstation](https://github.com/l3tnun/docker-mirakurun-epgstation)
   
@@ -20,9 +20,9 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 ## インストール手順
 
-1. docker-mirakurun-epgstation/epgstation/config/config.ymlのrecordedFormat を '%TITLE%' が先頭になるように変更
+1. 設定 docker-mirakurun-epgstation/epgstation/config/config.ymlのrecordedFormat を '%TITLE%' が先頭になるように変更
 2. git clone https://github.com/takyaO/epg2jelly.git ファイル一式を~/work/  にコピー
-3. 設定ファイルenv.shを確認の上で encode.shの動作を確認
+3. 設定 env.shを確認の上で encode.shの動作を確認
 4. cronに登録
 
 ```*/4 * * * * $HOME/work/encode.sh >> $HOME/work/encode.log 2>&1```
