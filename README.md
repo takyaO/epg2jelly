@@ -12,7 +12,7 @@ Supports the integration of the TV recording management server, EPGStation, with
 
 1. **EPGStation** 
    
-　　[l3tnun/docker-mirakurun-epgstation](https://github.com/l3tnun/docker-mirakurun-epgstation)
+　　https://github.com/l3tnun/docker-mirakurun-epgstation
   
 2. **ffmpeg**やjqなど、標準的なパッケージ
    
