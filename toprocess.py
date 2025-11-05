@@ -154,14 +154,10 @@ def main():
         if not os.path.exists(sourcedir):
             print(f"Error: Source folder '{sourcedir}' does not exist.")
             return
-            
-        print(f"Folder watch mode: monitoring {sourcedir}")
         unprocessed_filenames = get_unprocessed_filenames_folder(processed_filenames, sourcedir)
     else:
         # サーバー監視モード (デフォルト)
-        print("Server watch mode: using EPGStation API")
         unprocessed_filenames = get_unprocessed_filenames_server(processed_filenames)
-    
     if unprocessed_filenames:
         for filename in unprocessed_filenames:
             print(filename)
@@ -170,5 +166,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
-#Time stamp: 2025/11/03

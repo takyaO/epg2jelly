@@ -26,13 +26,14 @@ COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|
 COUNT_TOTAL=$(grep -i "error" "$LOG" | wc -l)
 
 # --- 要約 ---
-SUMMARY="File: $BASENAME
-Audio: $COUNT_AUDIO
-Video: $COUNT_VIDEO
-TS: $COUNT_TS
-Total: $COUNT_TOTAL"
+echo "SUMMARY: chkdrp.sh"
+echo "File   : $BASENAME"
+echo "Audio  : $COUNT_AUDIO"
+echo "Video  : $COUNT_VIDEO"
+echo "TS     : $COUNT_TS"
+echo "Total  : $COUNT_TOTAL"
 
-# --- 判定 ---
+# --- 通知 ---
 notify() {
     local LEVEL="$1"
     local MSG="$2"
@@ -42,12 +43,18 @@ notify() {
     fi
 }
 
-if (( COUNT_AUDIO > 5 )); then
+if (( COUNT_AUDIO > 50  && COUNT_AUDIO < 200 )); then
+    notify 2 "AUDIO ERRORS in $BASENAME ($COUNT_AUDIO)"
+elif (( COUNT_AUDIO >= 200 )); then
     notify 4 "AUDIO ERRORS in $BASENAME ($COUNT_AUDIO)"
-elif (( COUNT_VIDEO > 5 )); then
+elif (( COUNT_VIDEO > 10  && COUNT_VIDEO < 30 )); then 
+    notify 2 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
+elif (( COUNT_VIDEO >= 30 )); then
     notify 4 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
-elif (( COUNT_TS > 5 )); then
-    notify 3 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
+elif (( COUNT_TS > 3  && COUNT_TS < 10 )); then
+    notify 2 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
+elif (( COUNT_TS >= 10 )); then
+    notify 4 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
 elif (( COUNT_TOTAL > 0 )); then
     echo "Minor issues detected in $BASENAME ($COUNT_TOTAL)"
 else

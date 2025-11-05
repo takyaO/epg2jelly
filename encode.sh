@@ -100,19 +100,20 @@ else
     # エンコードにかかる必要時間（分）: 有効２桁で計算
     mins_toencode=$(echo "scale=2; $gbs*$mingb*1.1" | bc) #1割の余裕をもたせる
     # 録画中件数
-    count=$(echo $(curl -s "${EPGSTATION_URL}api/recording?isHalfWidth=false") | rev | cut -c 2-2 | rev)
+    response=$(curl -s "${EPGSTATION_URL}/api/recording?isHalfWidth=false")
+    count=$(echo "$response" | rev | cut -c 2-2 | rev)
     if [ "$count" = "0" ]; then
-	# 次の予約までの時間 (録画中は負)
-	def=$(curl -s "${EPGSTATION_URL}api/reserves?type=normal&limit=1&isHalfWidth=false" | jq -c '.reserves[] | [.startAt]' | cut -c 2- | rev | cut -c 2- | rev)
-	# min_toencode 分以上あるならエンコード実行
-	if (( $(echo "scale=2; ($def/1000-$timenow)/60 > $mins_toencode" | bc -l) )); then    
+	start_at=$(curl -s "${EPGSTATION_URL}/api/reserves?type=normal&limit=1&isHalfWidth=false" | jq -r '.reserves[0].startAt')
+	result=$(echo "scale=2; ($start_at/1000 - $timenow)/60 > $mins_toencode" | bc)
+	if [ "$result" -eq 1 ]; then
+	    # 時間が足りる場合は処理開始
 	    start_time=$(date +%s)
 	    "$SCRIPT"
 	    end_time=$(date +%s)
 	    duration=$((end_time - start_time))
 	    mins=$((duration / 60))
 
-	    # === Record current result ===
+	    # 記録を残す
 	    if (( $(echo "$gbs >= $MIN_GBS && $mins >= $MIN_MINS" | bc -l) )); then
 		run_id=$(( $(wc -l < "$STATS_FILE" 2>/dev/null || echo 0) + 1 ))
 		echo "$run_id,$gbs,$mins,$mingb" >> "$STATS_FILE"
@@ -122,7 +123,7 @@ else
 		rm  "$DEFERRAL_FILE"
 	    fi
 	else
-	    # 時間が足りない場合は 延期処理
+	    # 時間が足りない場合は延期処理
 	    new_count=$((deferral_count + 1))
 	    echo "$new_count" > "$DEFERRAL_FILE"
 	    echo "WARNING: No enough time to encode until the next recording"

@@ -196,23 +196,22 @@ function getEnv(variableName) {
 // libaribb24の利用可能性をチェック
 function checkLibaribb24Availability() {
     try {
-        // 方法1: ffmpegのビルド設定を確認
-        const buildconfOptions = ['-buildconf'];
-        const buildconfResult = execFileSync(getEnv('FFMPEG'), buildconfOptions, { encoding: 'utf8' });
-        const hasInBuildconf = buildconfResult.includes('--enable-libaribb24');
+        // シンプルにバージョン情報だけでチェック
+        const versionResult = execFileSync(getEnv('FFMPEG'), ['-version'], { encoding: 'utf8' });
+        const isAvailable = versionResult.includes('libaribb24');
         
-        // 方法2: コーデックリストを確認
-        const codecsOptions = ['-codecs'];
-        const codecsResult = execFileSync(getEnv('FFMPEG'), codecsOptions, { encoding: 'utf8' });
-        const hasInCodecs = codecsResult.includes('arib_caption') && codecsResult.includes('DECODER') && codecsResult.includes('libaribb24');
+        console.log('libaribb24 available:', isAvailable);
         
-        console.log(`libaribb24 detection - Buildconf: ${hasInBuildconf}, Codecs: ${hasInCodecs}`);
+        // デバッグ用に詳細を出力
+        if (!isAvailable) {
+            const configLine = versionResult.split('\n').find(line => line.includes('configuration:'));
+            console.log('Build configuration:', configLine);
+        }
         
-        // どちらかで検出されたら利用可能と判断
-        return hasInBuildconf || hasInCodecs;
+        return isAvailable;
     } catch (error) {
-        console.error('Error checking libaribb24 availability:', error.message);
-        return false;
+        console.error('Error in libaribb24 check, assuming available:', error.message);
+        return true; // エラー時は利用可能と仮定
     }
 }
 
@@ -669,4 +668,4 @@ function debugAllStreams() {
 }
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/03
+// Time stamp: 2025/11/05

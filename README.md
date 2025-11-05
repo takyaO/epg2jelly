@@ -1,6 +1,5 @@
 # epg2jelly
-Supports the integration of the TV recording management server, EPGStation, with media servers like Jellyfin, facilitating seamless connectivity between these platforms to enhance user experience in managing and accessing recorded content.
-
+Helps integrate the TV recording management server, EPGStation, with media servers like Jellyfin. Transcodes m2ts files to mp4 format during spare times when recording is not active. Converted files are organized in a hierarchical structure within a folder managed by the media server.
 
 **テレビ録画管理サーバー EPGStation** と **Jellyfin** などのメディアサーバーとの連携を支援するツールです。
 
