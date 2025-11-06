@@ -51,9 +51,9 @@ elif (( COUNT_VIDEO > 10  && COUNT_VIDEO < 30 )); then
     notify 2 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
 elif (( COUNT_VIDEO >= 30 )); then
     notify 4 "VIDEO ERRORS in $BASENAME ($COUNT_VIDEO)"
-elif (( COUNT_TS > 3  && COUNT_TS < 10 )); then
+elif (( COUNT_TS > 3  && COUNT_TS < 15 )); then
     notify 2 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
-elif (( COUNT_TS >= 10 )); then
+elif (( COUNT_TS >= 15 )); then
     notify 4 "TS CORRUPTION in $BASENAME ($COUNT_TS)"
 elif (( COUNT_TOTAL > 0 )); then
     echo "Minor issues detected in $BASENAME ($COUNT_TOTAL)"

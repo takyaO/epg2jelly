@@ -161,8 +161,6 @@ def main():
     if unprocessed_filenames:
         for filename in unprocessed_filenames:
             print(filename)
-    else:
-        print("No unprocessed files found.")
 
 if __name__ == '__main__':
     main()
