@@ -13,17 +13,18 @@ BASENAME=$(basename "$INPUT")
 
 # --- 一時ログ ---
 LOG=$(mktemp /tmp/chkdrp.XXXXXX.log)
+LOG2=$(mktemp /tmp/chkdrp.XXXXXX.log)
 
 # --- ffmpegログ収集（error以上をすべて）---
 ffmpeg -v error -i "$INPUT" -f null - 2> "$LOG" || true
-# warningレベルも追記
-#ffmpeg -v warning -i "$INPUT" -f null - 2>> "$LOG" || true
+# warningレベル
+ffmpeg -v warning -i "$INPUT" -f null - 2> "$LOG2" || true
 
 # --- カテゴリ別カウント ---
-COUNT_AUDIO=$(grep -Ei "aac|audio|channel element|submitting packet to decoder" "$LOG" | wc -l)
-COUNT_VIDEO=$(grep -Ei "mpeg2video|vist|vdec|invalid mb type|motion_type|ac-tex|Warning MVs|corrupt decoded frame" "$LOG" | wc -l)
-COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|invalid dts|invalid pts|timestamp" "$LOG" | wc -l)
-#COUNT_TOTAL=$(grep -i "error" "$LOG" | wc -l)
+COUNT_TOTAL=$(grep -i "error" "$LOG" | wc -l)
+COUNT_AUDIO=$(grep -Ei "aac|audio|channel element|submitting packet to decoder" "$LOG2" | wc -l)
+COUNT_VIDEO=$(grep -Ei "mpeg2video|vist|vdec|invalid mb type|motion_type|ac-tex|Warning MVs|corrupt decoded frame" "$LOG2" | wc -l)
+COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|invalid dts|invalid pts|timestamp" "$LOG2" | wc -l)
 
 # --- 通知 ---
 notify() {
@@ -35,14 +36,19 @@ notify() {
     fi
 }
 MESSAGE=$(cat <<EOF
-CHKDRP:  $BASENAME
-Audio errors : $COUNT_AUDIO
-Video errors: $COUNT_VIDEO
-TS      errors: $COUNT_TS
+CHKDRP: $BASENAME
+ERRORS: $COUNT_TOTAL
+WARNINGS: $(( COUNT_AUDIO + COUNT_VIDEO + COUNT_TS )) (Audio: $COUNT_AUDIO, Video: $COUNT_VIDEO, TS: $COUNT_TS)
 EOF
 )
 
 echo "$MESSAGE"
-notify 2 "$MESSAGE"
+if (( COUNT_TOTAL > 0 )); then
+    notify 3 "$MESSAGE"
+else
+    notify 1 "$MESSAGE"
+fi
+
 
 rm -f "$LOG"
+rm -f "$LOG2"
