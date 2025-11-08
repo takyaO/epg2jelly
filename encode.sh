@@ -22,8 +22,8 @@ MIN_GBS=1.0    # 1GB未満は統計に反映しない
 MIN_MINS=1.0    # 1分未満は統計に反映しない
 
 DEFERRAL_FILE="$WORKDIR/$(basename "$0").deferrals"
-MAX_DEFERRALS=10 # 最大延期回数：10回まで延期を許す
-#処理が録画に追いつかないとバックログが貯まり続けるので要手動対応
+MAX_DEFERRALS=100 # 最大延期回数
+#未処理バックログが貯まり続けないよう限度を設ける
 
 # --- ロックファイルチェック ---
 if [ -f "$LOCKFILE" ]; then
@@ -37,8 +37,9 @@ deferral_count=$(cat "$DEFERRAL_FILE" 2>/dev/null || echo "0")
 # 最大延期回数チェック
 if [[ $deferral_count -ge $MAX_DEFERRALS ]]; then
     echo "WARNING: Maximum Number of Deferrals Exceeded ($MAX_DEFERRALS)" >&2
+    echo "WARNING: Too many recordings to process. Complete them manually." >&2
     if [ -v NTFY_URL ]; then
-	curl -H "X-Priority: 3" -d "WARNING: $WORKDIR/$(basename "$0")  最大延期回数($MAX_DEFERRALS)を超えました" "$NTFY_URL"
+	curl -H "X-Priority: 3" -d "WARNING: $WORKDIR/$(basename "$0")  最大延期回数($MAX_DEFERRALS)を超えました。手動で処理してください" "$NTFY_URL"
     fi
 fi
 
@@ -124,9 +125,10 @@ else
 	    fi
 	else
 	    # 時間が足りない場合は延期処理
+	    echo "$(( ($start_at/1000 - $timenow)/60 )) mins left but $mins_toencode mins needed"
+	    echo "WARNING: No enough time to encode until the next recording"
 	    new_count=$((deferral_count + 1))
 	    echo "$new_count" > "$DEFERRAL_FILE"
-	    echo "WARNING: No enough time to encode until the next recording"
 	    echo "Deferred ($new_count/$MAX_DEFERRALS)"
 	fi
     fi
