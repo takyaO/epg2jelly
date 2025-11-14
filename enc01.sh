@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 IFS=$'\n\t'
 
-#ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -b:a 192k)
-
-# オーディオコーデックを追加
+# libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
     audio_codec="libfdk_aac"
 else
     audio_codec="aac"
 fi
-FFMPEG_OPTS+=(-c:a "$audio_codec")
+#ffmpeg のオプション
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -c:a "$audio_codec" -b:a 192k)
 
-# --- 環境変数をロード ---
+# --- 環境変数のロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/env.sh"
 
 if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 else
-  echo "Not found: $ENV_FILE" >&2
+  echo "環境設定ファイルが見つかりません: $ENV_FILE" >&2
   exit 1
 fi
 
@@ -30,6 +28,14 @@ if [[ "${VERBOSE:-0}" -eq 1 ]]; then
 fi
 
 # --- 関数群 ---
+notify() {
+    local LEVEL="$1"
+    local MSG="$2"
+    if [ -v NTFY_URL ]; then
+        curl -H "X-Priority: $LEVEL" -d "$MSG" "$NTFY_URL" >/dev/null 2>&1 || true
+    fi
+}
+
 bc_calc() {
     echo "scale=6; $1" | bc -l | awk '{printf "%.6f", $0}'
 }
@@ -63,9 +69,7 @@ watch_iowait() {
         elapsed=$((elapsed + INTERVAL))
         if (( elapsed >= MAX_WAIT )); then
             echo "IOWAIT did not drop below ${THRESHOLD}% after ${MAX_WAIT}s. Exiting."
-	    if [ -v NTFY_URL ]; then
-		curl -H "X-Priority: 3" -d "ERROR: IOWAIT > ${THRESHOLD}%: $FILENAME" "$NTFY_URL"
-	    fi
+	    notify 3 "ERROR: IOWAIT > ${THRESHOLD}%: $FILENAME" 
             exit 1
         fi
     done
@@ -242,43 +246,30 @@ EOF
         ./epg.sh "$FILE" > epg.json
         ./enc.js "$SOURCEDIR/$FILE" epg.json  || {
             echo "enc.js failed" >&2
-		if [ -v NTFY_URL ]; then
-                    curl -H "X-Priority: 3" -d "ERROR: enc.js failed: $FILENAME" "$NTFY_URL"
-		fi
-		exit 1
+	    notify 4 "ERROR: enc.js failed: $FILENAME"
 	}
 
-        if [ -f "$FILENAME.mp4" ] && [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
-            jls "$FILENAME.mp4" jls_out.txt
-            trim "$FILENAME.mp4" jls_out.txt temp$$.mp4
-            if [ -s temp$$.mp4 ]; then
-                rm "$FILENAME.mp4"
-                mv temp$$.mp4 "$FILENAME.mp4"
-            else
-                echo "Error: trim failed" >&2
-		if [ -v NTFY_URL ]; then
-                    curl -H "X-Priority: 3" -d "ERROR: trim failed: $FILENAME" "$NTFY_URL"
+        if [ -f "$FILENAME.mp4" ]; then
+	    if [ -s "$FILENAME.mp4" ]; then	    
+		if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
+		    jls "$FILENAME.mp4" jls_out.txt
+		    trim "$FILENAME.mp4" jls_out.txt temp$$.mp4
+		    if [ -s temp$$.mp4 ]; then
+			rm "$FILENAME.mp4"
+			mv temp$$.mp4 "$FILENAME.mp4"
+		    else
+			echo "Error: trim failed" >&2
+			notify 3 "ERROR: trim failed: $FILENAME"
+		    fi
+		    rm "$FILENAME.mp4.lwi"
 		fi
-                ./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
-                rm "$FILENAME.mp4.lwi"
-                ./processed.py "$FILE"
-                exit 1
+		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
+		notify 2 "mp4 created: $FILENAME"
+            else
+		echo "ERROR: mp4 not created" >&2
+		notify 4 "ERROR: mp4 not created: $FILENAME"
             fi
-            rm "$FILENAME.mp4.lwi"
-        fi
-
-        if [ -s "$FILENAME.mp4" ]; then
-            ./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
-	    if [ -v NTFY_URL ]; then
-		curl -H "X-Priority: 2" -d "mp4 created: $FILENAME" "$NTFY_URL"
-	    fi
-        else
-            echo "ERROR: mp4 not created" >&2
-	    if [ -v NTFY_URL ]; then
-		curl -H "X-Priority: 3" -d "ERROR: mp4 not created: $FILENAME" "$NTFY_URL"
-	    fi
-            exit 1
-        fi
+	fi	
 
         ./processed.py "$FILE" || true
     fi

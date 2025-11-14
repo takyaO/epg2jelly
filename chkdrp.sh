@@ -30,7 +30,6 @@ COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|
 notify() {
     local LEVEL="$1"
     local MSG="$2"
-    echo "$MSG"
     if [ -v NTFY_URL ]; then
         curl -H "X-Priority: $LEVEL" -d "$MSG" "$NTFY_URL" >/dev/null 2>&1 || true
     fi
