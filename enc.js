@@ -253,6 +253,7 @@ function getAudioCodec() {
     const useCodecPostArgs = [];
 
     if (useCodec === 'h264_qsv') {
+	useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
 	useCodecPostArgs.push('-preset', 'fast');
         useCodecPostArgs.push('-global_quality', '20');
@@ -405,6 +406,7 @@ function getAudioCodec() {
 function detectAllSubtitleStreams() {
     try {
         const options = [
+            ...getAnalyze(), // 分析オプションを追加
             '-v', 'error',
             '-select_streams', 's',
             '-show_entries', 'stream=index,codec_name,codec_type,tags:stream_tags:stream_tags=language',
@@ -493,7 +495,7 @@ function isTs() {
 }
 
 function getAnalyze() {
-    return ['-analyzeduration', '10M'];
+    return ['-analyzeduration', '100M', '-probesize', '100M']; // 10Mから100Mに変更
 }
 
 function getFFprobe(showOptions) {
@@ -522,6 +524,7 @@ function convertSecToTime(second) {
 function getActualAudioStreamIndices() {
     try {
         const options = [
+            ...getAnalyze(), // 分析オプションを追加
             '-v', 'error',
             '-select_streams', 'a',
             '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate',
@@ -634,6 +637,7 @@ function getAudioArgs(audioCodec) {
 function debugAllStreams() {
     try {
         const options = [
+            ...getAnalyze(), // 分析オプションを追加
             '-v', 'error',
             '-show_streams',
             '-of', 'json',
@@ -668,4 +672,4 @@ function debugAllStreams() {
 }
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/05
+// Time stamp: 2025/11/21
