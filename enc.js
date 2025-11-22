@@ -175,7 +175,6 @@ const epgsConfig = {
 const ffmpegLogOutOnlyOnError = true;
 const progressLogOutMax = 0; // 進捗表示を無効化
 // デフォルトコーデック設定
-//const useCodec = 'h264_qsv'; //libx264, h264_qsv, h264_vaapi
 const useCodec = 'libx264'; //libx264, h264_qsv, h264_vaapi
 // 固定で3秒カット
 const fixedCutSecond = 3;
@@ -232,12 +231,106 @@ function checkLibfdkAacAvailability() {
     }
 }
 
-// 利用可能な音声コーデックを決定
-function getAudioCodec() {
-    const hasLibfdkAac = checkLibfdkAacAvailability();
-    const audioCodec = hasLibfdkAac ? 'libfdk_aac' : 'aac';
-    console.log(`Using audio codec: ${audioCodec}`);
-    return audioCodec;
+// 音声ストリームの詳細情報を取得する関数
+function getAudioStreamDetails() {
+    try {
+        const options = [
+            ...getAnalyze(),
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate,tags:stream_tags=language,title:stream_tags=title',
+            '-of', 'json',
+            getEnv('INPUT')
+        ];
+        
+        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
+        const info = JSON.parse(result);
+        const audioStreams = [];
+        
+        if (info.streams && info.streams.length > 0) {
+            console.log('All audio streams with details:');
+            for (const stream of info.streams) {
+                const streamInfo = {
+                    index: stream.index,
+                    codec: stream.codec_name,
+                    channels: stream.channels,
+                    bitrate: stream.bit_rate,
+                    sampleRate: stream.sample_rate,
+                    language: (stream.tags && stream.tags.language) ? stream.tags.language : null,
+                    title: (stream.tags && stream.tags.title) ? stream.tags.title : null
+                };
+                audioStreams.push(streamInfo);
+                console.log(`  Stream #${streamInfo.index}: ${streamInfo.codec}, ${streamInfo.channels}ch, ${streamInfo.bitrate}bps, lang=${streamInfo.language}, title=${streamInfo.title}`);
+            }
+        }
+        
+        return audioStreams;
+    } catch (error) {
+        console.error('Error getting audio stream details:', error.message);
+        return [];
+    }
+}
+
+// 音声ストリームの言語を推測する関数
+function determineAudioLanguages(audioStreams, fileName) {
+    const isBilingual = /\[二\]/.test(fileName);
+    const isExplanation = /\[解\]/.test(fileName);
+    const isMultiAudio = /\[多\]/.test(fileName);
+    
+    const languageMap = {};
+    
+    console.log('Determining audio languages:', { isBilingual, isExplanation, isMultiAudio });
+    
+    // 既存の言語タグを確認
+    for (const stream of audioStreams) {
+        if (stream.language) {
+            languageMap[stream.index] = stream.language;
+            console.log(`Stream ${stream.index} has explicit language tag: ${stream.language}`);
+        }
+    }
+    
+    // ストリームタイトルから言語を推測
+    for (const stream of audioStreams) {
+        if (!languageMap[stream.index] && stream.title) {
+            const title = stream.title.toLowerCase();
+            if (title.includes('eng') || title.includes('english') || title.includes('英語')) {
+                languageMap[stream.index] = 'eng';
+                console.log(`Stream ${stream.index} title suggests English: ${stream.title}`);
+            } else if (title.includes('jpn') || title.includes('japanese') || title.includes('日本語') || title.includes('主') || title.includes('メイン')) {
+                languageMap[stream.index] = 'jpn';
+                console.log(`Stream ${stream.index} title suggests Japanese: ${stream.title}`);
+            } else if (title.includes('副') || title.includes('解説') || title.includes('comm') || title.includes('comment')) {
+                // 副音声や解説は日本語と推測
+                languageMap[stream.index] = 'jpn';
+                console.log(`Stream ${stream.index} title suggests Japanese (secondary): ${stream.title}`);
+            }
+        }
+    }
+    
+    // 言語タグがない場合の推測ロジック
+    const untaggedStreams = audioStreams.filter(stream => !languageMap[stream.index]);
+    
+    if (untaggedStreams.length > 0) {
+        if (isBilingual && audioStreams.length >= 2) {
+            // [二]がある場合：最初のストリームを日本語、2番目を英語と推測
+            // ただし、既に言語が設定されているストリームを考慮
+            const mainStream = untaggedStreams.find(stream => stream.index === Math.min(...untaggedStreams.map(s => s.index)));
+            const secondaryStream = untaggedStreams.find(stream => stream.index === Math.max(...untaggedStreams.map(s => s.index)));
+            
+            if (mainStream) languageMap[mainStream.index] = 'jpn';
+            if (secondaryStream && secondaryStream !== mainStream) languageMap[secondaryStream.index] = 'eng';
+            
+            console.log('Bilingual content: assuming lower index stream is Japanese, higher index is English');
+        } else {
+            // その他の場合：すべて日本語と推測
+            for (const stream of untaggedStreams) {
+                languageMap[stream.index] = 'jpn';
+            }
+            console.log('Assuming all untagged streams are Japanese');
+        }
+    }
+    
+    return languageMap;
 }
 
 // メイン処理
@@ -560,31 +653,24 @@ function getAudioArgs(audioCodec) {
     const fileName = getEnv('NAME');
     const audioComponentType = parseInt(getEnv('AUDIOCOMPONENTTYPE'), 10);
     const isDualMono = audioComponentType == 2;
-    const isBilingual = /\[二\]/.test(fileName);
-    const isExplanation = /\[解\]/.test(fileName);
-    const isMultiAudio = /\[多\]/.test(fileName);
     const args = [];
     
-    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 'isBilingual:', isBilingual, 'isExplanation:', isExplanation, 'audioCodec:', audioCodec);
+    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 'audioCodec:', audioCodec);
 
-    // 実際の音声ストリームインデックスを取得
-    let actualAudioIndices = getActualAudioStreamIndices();
+    // 音声ストリームの詳細情報を取得
+    const audioStreams = getAudioStreamDetails();
     
-    // 必要な音声ストリーム数を決定
-    let needAudioCount = 1;
-    if ((isBilingual || isExplanation || isMultiAudio) && !isDualMono) {
-        needAudioCount = 2;
+    if (audioStreams.length === 0) {
+        console.error('No audio streams found!');
+        return { args: [] };
     }
-    
-    // 実際のストリーム数と必要なストリーム数の小さい方を採用
-    const audioCount = Math.min(actualAudioIndices.length, needAudioCount);
-    console.log('Using audio streams:', audioCount, 'out of', actualAudioIndices.length, 'available');
 
     // 音声多重放送(デュアルモノ) - audioComponentTypeが2の場合のみ処理
-    if (isDualMono && actualAudioIndices.length >= 1) {
+    if (isDualMono && audioStreams.length >= 1) {
         console.log('Processing as dual mono');
+        const mainStreamIndex = audioStreams[0].index;
         // 左右チャンネルを分割して2つのモノラルストリームを作成
-        args.push('-filter_complex', `[0:${actualAudioIndices[0]}]channelsplit=channel_layout=stereo[left][right]`);
+        args.push('-filter_complex', `[0:${mainStreamIndex}]channelsplit=channel_layout=stereo[left][right]`);
         // 左チャンネル（日本語）
         args.push('-map', '[left]');
         // 右チャンネル（英語）
@@ -592,7 +678,7 @@ function getAudioArgs(audioCodec) {
         // メタデータ設定（日本語→英語の順序）
         args.push('-metadata:s:a:0', 'language=jpn');
         args.push('-metadata:s:a:1', 'language=eng');
-        // 音声コーデック設定（選択されたコーデックを使用）
+        // 音声エンコード設定（選択されたコーデックを使用）
         args.push('-c:a', audioCodec);
         args.push('-b:a:0', '192k');
         args.push('-b:a:1', '192k');
@@ -604,25 +690,17 @@ function getAudioArgs(audioCodec) {
     // 通常の音声処理
     console.log('Processing as normal audio');
     
-    // 音声マッピング - 取得したインデックスを使ってマップ（オプショナルマッピング）
-    for (let i = 0; i < audioCount; i++) {
-        const streamIndex = actualAudioIndices[i];
-        args.push('-map', `0:${streamIndex}?`); // オプショナルマッピング
-        console.log(`Mapping audio stream: 0:${streamIndex}?`);
-    }
+    // 言語の決定
+    const languageMap = determineAudioLanguages(audioStreams, fileName);
     
-    // メタデータ設定 - 実際にマップされたストリームにのみ設定
-    for (let index = 0; index < audioCount; index++) {
-        let lang = 'jpn';
-        if (audioCount > 1) {
-            // 二ヶ国語放送の場合のみ2番目の音声を英語に設定
-            if (isBilingual && index === 1) {
-                lang = 'eng'; // 二ヶ国語放送の副音声は英語
-            } else if (isExplanation || isMultiAudio) {
-                lang = 'jpn'; // 解説放送や多重放送は日本語
-            }
-        }
-        args.push(`-metadata:s:a:${index}`, `language=${lang}`);
+    // 音声ストリームのマッピングと言語設定
+    let audioIndex = 0;
+    for (const stream of audioStreams) {
+        args.push('-map', `0:${stream.index}?`);
+        const lang = languageMap[stream.index] || 'jpn'; // デフォルトは日本語
+        args.push(`-metadata:s:a:${audioIndex}`, `language=${lang}`);
+        console.log(`Mapping audio stream ${stream.index} as audio track ${audioIndex} with language: ${lang}`);
+        audioIndex++;
     }
 
     // 音声エンコード設定（選択されたコーデックを使用）
@@ -631,6 +709,14 @@ function getAudioArgs(audioCodec) {
     args.push('-ac', '2');
 
     return { args: args };
+}
+
+// 利用可能な音声コーデックを決定
+function getAudioCodec() {
+    const hasLibfdkAac = checkLibfdkAacAvailability();
+    const audioCodec = hasLibfdkAac ? 'libfdk_aac' : 'aac';
+    console.log(`Using audio codec: ${audioCodec}`);
+    return audioCodec;
 }
 
 // 入力ファイルのすべてのストリーム情報を表示する関数
@@ -672,4 +758,4 @@ function debugAllStreams() {
 }
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/21
+// Time stamp: 2025/11/22

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 IFS=$'\n\t'
 
+#ffmpeg のオプション
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
     audio_codec="libfdk_aac"
 else
     audio_codec="aac"
 fi
-#ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast -c:a "$audio_codec" -b:a 192k)
 
 # --- 環境変数のロード ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,10 +93,36 @@ trim() {
     INDEX=0
     > "$PARTS_LIST"
 
+    # --- ストリーム判定（入力ファイルごとに実行） ---
+    # 字幕の有無
     if ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$INPUT" | grep -q .; then
-        SUB_OPT=(-c:s copy -map 0)
+	HAS_SUBS=yes
     else
-        SUB_OPT=()
+	HAS_SUBS=no
+    fi
+
+    # 音声ストリーム数（数値）
+    AUDIO_COUNT=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$INPUT" | wc -l | tr -d ' ')
+
+    # --- オプション配列を組み立てる ---
+    STREAM_OPT=()      # -map / copy_unknown 等
+    CODEC_OPT=()       # -c:a:0 など音声/字幕のコーデック指定
+
+    # まず基本的に map 指定は必要なら付ける（字幕か複数音声）
+    if [[ "$HAS_SUBS" == "yes" || "$AUDIO_COUNT" -gt 1 ]]; then
+	STREAM_OPT+=(-map 0 -copy_unknown)
+    fi
+
+    # 字幕があるなら明示的に字幕はコピー
+    if [[ "$HAS_SUBS" == "yes" ]]; then
+	CODEC_OPT+=(-c:s copy)
+    fi
+
+    # --- すべての音声ストリームを再エンコードする --- ずれ対策
+    if [[ "$AUDIO_COUNT" -gt 0 ]]; then
+	for ((i=0; i<"$AUDIO_COUNT"; i++)); do
+            CODEC_OPT+=(-c:a:"$i" "$audio_codec" -b:a:"$i" 192k)
+	done
     fi
 
     while read -r line; do
@@ -112,10 +139,18 @@ trim() {
 
             if (( $(echo "$STARTSEC >= 5" | bc -l) )); then
                 START_BEFORE=$(echo "$STARTSEC - 5" | bc -l | sed 's/^\./0./')
-                ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${SUB_OPT[@]}" "$PART"
-            else
-                ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" "${FFMPEG_OPTS[@]}" "${SUB_OPT[@]}" "$PART"
-            fi
+		ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
+		       "${FFMPEG_OPTS[@]}" \
+		       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+		       -avoid_negative_ts make_zero \
+		       "$PART"
+	    else
+		ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
+		       "${FFMPEG_OPTS[@]}" \
+		       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+		       -avoid_negative_ts make_zero \
+		       "$PART"
+	    fi
 
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
