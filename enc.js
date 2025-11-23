@@ -768,46 +768,6 @@ function getAudioArgs(audioCodec) {
     return { args: args };
 }
 
-// 音声ストリームの詳細情報を取得する関数
-function getAudioStreamDetails() {
-    try {
-        const options = [
-            ...getAnalyze(),
-            '-v', 'error',
-            '-select_streams', 'a',
-            '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate,tags:stream_tags=language,title:stream_tags=title',
-            '-of', 'json',
-            getEnv('INPUT')
-        ];
-        
-        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
-        const info = JSON.parse(result);
-        const audioStreams = [];
-        
-        if (info.streams && info.streams.length > 0) {
-            console.log('All audio streams with details:');
-            for (const stream of info.streams) {
-                const streamInfo = {
-                    index: stream.index,
-                    codec: stream.codec_name,
-                    channels: stream.channels,
-                    bitrate: stream.bit_rate,
-                    sampleRate: stream.sample_rate,
-                    language: (stream.tags && stream.tags.language) ? stream.tags.language : null,
-                    title: (stream.tags && stream.tags.title) ? stream.tags.title : null
-                };
-                audioStreams.push(streamInfo);
-                console.log(`  Stream #${streamInfo.index}: ${streamInfo.codec}, ${streamInfo.channels}ch, ${streamInfo.bitrate}bps, lang=${streamInfo.language}, title=${streamInfo.title}`);
-            }
-        }
-        
-        return audioStreams;
-    } catch (error) {
-        console.error('Error getting audio stream details:', error.message);
-        return [];
-    }
-}
-
 // 利用可能な音声コーデックを決定
 function getAudioCodec() {
     const hasLibfdkAac = checkLibfdkAacAvailability();
@@ -851,74 +811,6 @@ function debugAllStreams() {
         console.log('=== DEBUG END ===');
     } catch (error) {
         console.error('Error debugging streams:', error.message);
-    }
-}
-
-// メイン音声ストリームを特定する関数
-function findMainAudioStream(audioStreams) {
-    if (audioStreams.length === 0) return null;
-    
-    // まずは言語タグが日本語のストリームを探す
-    const japaneseStream = audioStreams.find(stream => 
-        stream.language && (stream.language === 'jpn' || stream.language === 'ja'));
-    
-    if (japaneseStream) {
-        console.log(`Found Japanese audio stream: ${japaneseStream.index}`);
-        return japaneseStream;
-    }
-    
-    // 次にタイトルから判断
-    const mainByTitle = audioStreams.find(stream => 
-        stream.title && (stream.title.includes('主') || stream.title.includes('メイン') || 
-                        stream.title.includes('main') || stream.title.includes('primary')));
-    
-    if (mainByTitle) {
-        console.log(`Found main audio stream by title: ${mainByTitle.index} (${mainByTitle.title})`);
-        return mainByTitle;
-    }
-    
-    // どれもなければ最初のストリームをメインとする
-    console.log(`Using first audio stream as main: ${audioStreams[0].index}`);
-    return audioStreams[0];
-}
-
-// 音声ストリームの詳細情報を取得する関数
-function getAudioStreamDetails() {
-    try {
-        const options = [
-            ...getAnalyze(),
-            '-v', 'error',
-            '-select_streams', 'a',
-            '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate,tags:stream_tags=language,title:stream_tags=title',
-            '-of', 'json',
-            getEnv('INPUT')
-        ];
-        
-        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
-        const info = JSON.parse(result);
-        const audioStreams = [];
-        
-        if (info.streams && info.streams.length > 0) {
-            console.log('All audio streams with details:');
-            for (const stream of info.streams) {
-                const streamInfo = {
-                    index: stream.index,
-                    codec: stream.codec_name,
-                    channels: stream.channels,
-                    bitrate: stream.bit_rate,
-                    sampleRate: stream.sample_rate,
-                    language: (stream.tags && stream.tags.language) ? stream.tags.language : null,
-                    title: (stream.tags && stream.tags.title) ? stream.tags.title : null
-                };
-                audioStreams.push(streamInfo);
-                console.log(`  Stream #${streamInfo.index}: ${streamInfo.codec}, ${streamInfo.channels}ch, ${streamInfo.bitrate}bps, lang=${streamInfo.language}, title=${streamInfo.title}`);
-            }
-        }
-        
-        return audioStreams;
-    } catch (error) {
-        console.error('Error getting audio stream details:', error.message);
-        return [];
     }
 }
 
