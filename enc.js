@@ -231,6 +231,34 @@ function checkLibfdkAacAvailability() {
     }
 }
 
+// メイン音声ストリームを特定する関数
+function findMainAudioStream(audioStreams) {
+    if (audioStreams.length === 0) return null;
+    
+    // まずは言語タグが日本語のストリームを探す
+    const japaneseStream = audioStreams.find(stream => 
+        stream.language && (stream.language === 'jpn' || stream.language === 'ja'));
+    
+    if (japaneseStream) {
+        console.log(`Found Japanese audio stream: ${japaneseStream.index}`);
+        return japaneseStream;
+    }
+    
+    // 次にタイトルから判断
+    const mainByTitle = audioStreams.find(stream => 
+        stream.title && (stream.title.includes('主') || stream.title.includes('メイン') || 
+                        stream.title.includes('main') || stream.title.includes('primary')));
+    
+    if (mainByTitle) {
+        console.log(`Found main audio stream by title: ${mainByTitle.index} (${mainByTitle.title})`);
+        return mainByTitle;
+    }
+    
+    // どれもなければ最初のストリームをメインとする
+    console.log(`Using first audio stream as main: ${audioStreams[0].index}`);
+    return audioStreams[0];
+}
+
 // 音声ストリームの詳細情報を取得する関数
 function getAudioStreamDetails() {
     try {
@@ -276,10 +304,11 @@ function determineAudioLanguages(audioStreams, fileName) {
     const isBilingual = /\[二\]/.test(fileName);
     const isExplanation = /\[解\]/.test(fileName);
     const isMultiAudio = /\[多\]/.test(fileName);
+    const isSecondary = /\[副\]/.test(fileName);
     
     const languageMap = {};
     
-    console.log('Determining audio languages:', { isBilingual, isExplanation, isMultiAudio });
+    console.log('Determining audio languages:', { isBilingual, isExplanation, isMultiAudio, isSecondary });
     
     // 既存の言語タグを確認
     for (const stream of audioStreams) {
@@ -398,8 +427,8 @@ function determineAudioLanguages(audioStreams, fileName) {
     // FFmpeg引数の組み立て
     let outputArgs;
     if (hasValidSubtitles) {
-        // 字幕ありでエンコード
-        outputArgs = [
+	// 字幕ありでエンコード
+	outputArgs = [
             '-y',
             ...getAnalyze(),
             ...sub.fix,
@@ -408,16 +437,16 @@ function determineAudioLanguages(audioStreams, fileName) {
             '-i', getEnv('INPUT'),
             '-map', '0:v',
             '-c:v', useCodec,
-            ...audio.args,
+            ...audio.args,       // 音声引数（空の場合もある）
             ...useCodecPostArgs, // 入力ファイルの後に追加
             ...metadataArgs,     // メタデータを追加
             ...sub.map,
             getEnv('OUTPUT')
-        ];
-        console.log('Encoding with subtitles');
+	];
+	console.log('Encoding with subtitles' + (audio.args.length > 0 ? ' and audio' : ' (no audio)'));
     } else {
-        // 字幕なしでエンコード
-        outputArgs = [
+	// 字幕なしでエンコード
+	outputArgs = [
             '-y',
             ...getAnalyze(),
             ...sub.fix,
@@ -426,12 +455,12 @@ function determineAudioLanguages(audioStreams, fileName) {
             '-i', getEnv('INPUT'),
             '-map', '0:v',
             '-c:v', useCodec,
-            ...audio.args,
+            ...audio.args,       // 音声引数（空の場合もある）
             ...useCodecPostArgs, // 入力ファイルの後に追加
             ...metadataArgs,     // メタデータを追加
             getEnv('OUTPUT')
-        ];
-        console.log('Encoding without subtitles');
+	];
+	console.log('Encoding without subtitles' + (audio.args.length > 0 ? ' with audio' : ' (no audio)'));
     }
 
     console.log('Input file:', getEnv('INPUT'));
@@ -653,9 +682,16 @@ function getAudioArgs(audioCodec) {
     const fileName = getEnv('NAME');
     const audioComponentType = parseInt(getEnv('AUDIOCOMPONENTTYPE'), 10);
     const isDualMono = audioComponentType == 2;
+    const isBilingual = /\[二\]/.test(fileName);
+    const isExplanation = /\[解\]/.test(fileName);
+    const isMultiAudio = /\[多\]/.test(fileName);
+    const isSecondary = /\[副\]/.test(fileName);
     const args = [];
     
-    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 'audioCodec:', audioCodec);
+    console.log('Audio component type:', audioComponentType, 'isDualMono:', isDualMono, 
+                'isBilingual:', isBilingual, 'isExplanation:', isExplanation, 
+                'isMultiAudio:', isMultiAudio, 'isSecondary:', isSecondary, 
+                'audioCodec:', audioCodec);
 
     // 音声ストリームの詳細情報を取得
     const audioStreams = getAudioStreamDetails();
@@ -687,8 +723,29 @@ function getAudioArgs(audioCodec) {
         return { args: args };
     }
 
-    // 通常の音声処理
-    console.log('Processing as normal audio');
+    // 音声タグがない場合はメイン音声ストリームのみマップ
+    const shouldMapAllAudio = isBilingual || isExplanation || isMultiAudio || isSecondary;
+    
+    if (!shouldMapAllAudio) {
+        console.log('No audio tags ([二], [解], [多], [副]) found in filename, mapping only main audio stream');
+        
+        // メイン音声ストリームを特定（通常は最初の音声ストリーム）
+        const mainAudioStream = findMainAudioStream(audioStreams);
+        if (mainAudioStream) {
+            args.push('-map', `0:${mainAudioStream.index}?`);
+            args.push(`-metadata:s:a:0`, `language=jpn`);
+            console.log(`Mapping only main audio stream: ${mainAudioStream.index}`);
+            
+            // 音声エンコード設定
+            args.push('-c:a', audioCodec);
+            args.push('-b:a', '192k');
+            args.push('-ac', '2');
+        }
+        return { args: args };
+    }
+
+    // 音声タグがある場合はすべての音声ストリームをマップ
+    console.log('Audio tags found in filename, mapping all audio streams');
     
     // 言語の決定
     const languageMap = determineAudioLanguages(audioStreams, fileName);
@@ -709,6 +766,46 @@ function getAudioArgs(audioCodec) {
     args.push('-ac', '2');
 
     return { args: args };
+}
+
+// 音声ストリームの詳細情報を取得する関数
+function getAudioStreamDetails() {
+    try {
+        const options = [
+            ...getAnalyze(),
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate,tags:stream_tags=language,title:stream_tags=title',
+            '-of', 'json',
+            getEnv('INPUT')
+        ];
+        
+        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
+        const info = JSON.parse(result);
+        const audioStreams = [];
+        
+        if (info.streams && info.streams.length > 0) {
+            console.log('All audio streams with details:');
+            for (const stream of info.streams) {
+                const streamInfo = {
+                    index: stream.index,
+                    codec: stream.codec_name,
+                    channels: stream.channels,
+                    bitrate: stream.bit_rate,
+                    sampleRate: stream.sample_rate,
+                    language: (stream.tags && stream.tags.language) ? stream.tags.language : null,
+                    title: (stream.tags && stream.tags.title) ? stream.tags.title : null
+                };
+                audioStreams.push(streamInfo);
+                console.log(`  Stream #${streamInfo.index}: ${streamInfo.codec}, ${streamInfo.channels}ch, ${streamInfo.bitrate}bps, lang=${streamInfo.language}, title=${streamInfo.title}`);
+            }
+        }
+        
+        return audioStreams;
+    } catch (error) {
+        console.error('Error getting audio stream details:', error.message);
+        return [];
+    }
 }
 
 // 利用可能な音声コーデックを決定
@@ -757,5 +854,73 @@ function debugAllStreams() {
     }
 }
 
+// メイン音声ストリームを特定する関数
+function findMainAudioStream(audioStreams) {
+    if (audioStreams.length === 0) return null;
+    
+    // まずは言語タグが日本語のストリームを探す
+    const japaneseStream = audioStreams.find(stream => 
+        stream.language && (stream.language === 'jpn' || stream.language === 'ja'));
+    
+    if (japaneseStream) {
+        console.log(`Found Japanese audio stream: ${japaneseStream.index}`);
+        return japaneseStream;
+    }
+    
+    // 次にタイトルから判断
+    const mainByTitle = audioStreams.find(stream => 
+        stream.title && (stream.title.includes('主') || stream.title.includes('メイン') || 
+                        stream.title.includes('main') || stream.title.includes('primary')));
+    
+    if (mainByTitle) {
+        console.log(`Found main audio stream by title: ${mainByTitle.index} (${mainByTitle.title})`);
+        return mainByTitle;
+    }
+    
+    // どれもなければ最初のストリームをメインとする
+    console.log(`Using first audio stream as main: ${audioStreams[0].index}`);
+    return audioStreams[0];
+}
+
+// 音声ストリームの詳細情報を取得する関数
+function getAudioStreamDetails() {
+    try {
+        const options = [
+            ...getAnalyze(),
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=index,codec_name,channels,bit_rate,sample_rate,tags:stream_tags=language,title:stream_tags=title',
+            '-of', 'json',
+            getEnv('INPUT')
+        ];
+        
+        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
+        const info = JSON.parse(result);
+        const audioStreams = [];
+        
+        if (info.streams && info.streams.length > 0) {
+            console.log('All audio streams with details:');
+            for (const stream of info.streams) {
+                const streamInfo = {
+                    index: stream.index,
+                    codec: stream.codec_name,
+                    channels: stream.channels,
+                    bitrate: stream.bit_rate,
+                    sampleRate: stream.sample_rate,
+                    language: (stream.tags && stream.tags.language) ? stream.tags.language : null,
+                    title: (stream.tags && stream.tags.title) ? stream.tags.title : null
+                };
+                audioStreams.push(streamInfo);
+                console.log(`  Stream #${streamInfo.index}: ${streamInfo.codec}, ${streamInfo.channels}ch, ${streamInfo.bitrate}bps, lang=${streamInfo.language}, title=${streamInfo.title}`);
+            }
+        }
+        
+        return audioStreams;
+    } catch (error) {
+        console.error('Error getting audio stream details:', error.message);
+        return [];
+    }
+}
+
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/22
+// Time stamp: 2025/11/24
