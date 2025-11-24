@@ -205,8 +205,7 @@ const epgsConfig = {
 const ffmpegLogOutOnlyOnError = true;
 const progressLogOutMax = 0; // 進捗表示を無効化
 // デフォルトコーデック設定
-//const useCodec = 'h264_qsv'; //libx264, h264_qsv, h264_vaapi
-const useCodec = 'h264_qsv'; //libx264, h264_qsv, h264_vaapi
+const useCodec = 'libx264'; //libx264, h264_qsv, h264_vaapi
 // 固定で3秒カット
 const fixedCutSecond = 3;
 
@@ -262,6 +261,40 @@ function checkLibfdkAacAvailability() {
     }
 }
 
+// h264_qsvの利用可能性をチェック
+function checkH264QsvAvailability() {
+    try {
+        // エンコーダーリストを確認
+        const encodersOptions = ['-encoders'];
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
+        const hasH264Qsv = encodersResult.includes('h264_qsv') && encodersResult.includes('H.264');
+        
+        console.log(`h264_qsv detection - Encoders: ${hasH264Qsv}`);
+        
+        // さらにハードウェアデバイスの可用性もチェック（オプション）
+        if (hasH264Qsv) {
+            try {
+                const hwaccelResult = execFileSync(getEnv('FFMPEG'), ['-hwaccels'], { encoding: 'utf8' });
+                const hasQsvHwaccel = hwaccelResult.includes('qsv');
+                console.log(`h264_qsv hardware acceleration available: ${hasQsvHwaccel}`);
+                
+                // ハードウェアアクセラレーションがない場合は利用不可と判断
+                if (!hasQsvHwaccel) {
+                    console.log('h264_qsv encoder exists but no QSV hardware acceleration available');
+                    return false;
+                }
+            } catch (hwError) {
+                console.log('Could not check hardware acceleration, assuming h264_qsv is available');
+            }
+        }
+        
+        return hasH264Qsv;
+    } catch (error) {
+        console.error('Error checking h264_qsv availability:', error.message);
+        return false;
+    }
+}
+
 // 利用可能な音声コーデックを決定
 function getAudioCodec() {
     const hasLibfdkAac = checkLibfdkAacAvailability();
@@ -270,182 +303,22 @@ function getAudioCodec() {
     return audioCodec;
 }
 
-// メイン処理
-(() => {
-    // デバッグモードを有効にする
-    const DEBUG_MODE = true;
+// 利用可能なビデオコーデックを決定
+function getVideoCodec() {
+    let useCodec = 'h264_qsv'; // デフォルト
     
-    if (DEBUG_MODE) {
-        debugAllStreams();
-    }
+    // h264_qsvが利用可能かチェック
+    const hasH264Qsv = checkH264QsvAvailability();
     
-    const useCodecPreArgs = [];
-    const useCodecPostArgs = [];
-
-    if (useCodec === 'h264_qsv') {
-	useCodecPreArgs.push('-fflags', '+genpts'); 
-        useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
-	useCodecPostArgs.push('-preset', 'fast');
-        useCodecPostArgs.push('-global_quality', '20');
-    } else if (useCodec === 'libx264') {
-	useCodecPreArgs.push('-fflags', '+genpts'); 
-        useCodecPostArgs.push('-vf', 'yadif');
-        useCodecPostArgs.push('-preset', 'fast');
-        useCodecPostArgs.push('-crf', '23');
-    } else if (useCodec === 'h264_vaapi') {
-        useCodecPreArgs.push('-hwaccel', 'vaapi');
-        useCodecPreArgs.push('-hwaccel_device', '/dev/dri/renderD128');
-        useCodecPostArgs.push('-vf', 'format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=1280:h=720');
-        useCodecPostArgs.push('-compression_level', '1');
-        useCodecPostArgs.push('-global_quality', '20');
-    }
-
-    // 音声コーデックを決定
-    const audioCodec = getAudioCodec();
-    
-    // 字幕設定 - libaribb24の可用性をチェックしてから取得
-    const hasLibaribb24 = checkLibaribb24Availability();
-    const sub = getSubTitlesArg(hasLibaribb24);
-    const audio = getAudioArgs(audioCodec);
-    
-    // 固定で3秒カット
-    const cutSecond = fixedCutSecond;
-    const ss = cutSecond > 0 ? ['-ss', cutSecond.toString()] : [];
-
-    // 字幕ストリームが有効かどうかをチェック
-    const hasValidSubtitles = sub.map.length > 0;
-    
-    // メタデータ引数の準備
-    const metadataArgs = [];
-    if (metadataDescription) {
-        // メタデータの改行をスペースに置換して問題を回避
-        const cleanDescription = metadataDescription.replace(/\n/g, ' ');
-        metadataArgs.push('-metadata', `description=${cleanDescription}`);
-    }
-    if (metadataTitle) {
-        metadataArgs.push('-metadata', `title=${metadataTitle}`);
-    }
-    if (metadataDate) {
-        metadataArgs.push('-metadata', `date=${metadataDate}`);
-    }
-    if (metadataGenre) {
-        metadataArgs.push('-metadata', `genre=${metadataGenre}`);
-    }
-    
-    // FFmpeg引数の組み立て
-    let outputArgs;
-    let additionalOutputs = [];
-    
-    if (splitTracks) {
-        // 分割出力モード
-        console.log('Split tracks mode: generating separate files for each stream');
-        additionalOutputs = generateSplitOutputs();
-    }
-    
-    if (hasValidSubtitles) {
-        // 字幕ありでエンコード
-        outputArgs = [
-            '-y',
-            ...getAnalyze(),
-            ...sub.fix,
-            ...useCodecPreArgs,  // 入力ファイルの前に追加
-            ...ss,
-            '-i', getEnv('INPUT'),
-            '-map', '0:v',
-            '-c:v', useCodec,
-            ...audio.args,
-            ...useCodecPostArgs, // 入力ファイルの後に追加
-            ...metadataArgs,     // メタデータを追加
-            ...sub.map,
-            getEnv('OUTPUT'),
-            ...additionalOutputs
-        ];
-        console.log('Encoding with subtitles' + (splitTracks ? ' and split tracks' : ''));
+    if (!hasH264Qsv) {
+        useCodec = 'libx264';
+        console.log('h264_qsv not available, falling back to libx264');
     } else {
-        // 字幕なしでエンコード
-        outputArgs = [
-            '-y',
-            ...getAnalyze(),
-            ...sub.fix,
-            ...useCodecPreArgs,  // 入力ファイルの前に追加
-            ...ss,
-            '-i', getEnv('INPUT'),
-            '-map', '0:v',
-            '-c:v', useCodec,
-            ...audio.args,
-            ...useCodecPostArgs, // 入力ファイルの後に追加
-            ...metadataArgs,     // メタデータを追加
-            getEnv('OUTPUT'),
-            ...additionalOutputs
-        ];
-        console.log('Encoding without subtitles' + (splitTracks ? ' with split tracks' : ''));
+        console.log('Using h264_qsv video codec');
     }
-
-    console.log('Input file:', getEnv('INPUT'));
-    console.log('Output file:', getEnv('OUTPUT'));
-    if (splitTracks) {
-        console.log('Additional split track files will be generated');
-    }
-    console.log('FFmpeg command:', 'ffmpeg', outputArgs.join(' '));
-
-    // 実行処理
-    const durationInfo = getFFprobe('-show_format');
-    const duration = durationInfo && durationInfo.format ? durationInfo.format.duration : 0;
-    const startTime = process.uptime();
-    const logBuffers = [];
-
-    const child = spawn(getEnv('FFMPEG'), outputArgs, { 
-        stdio: ['ignore', 'pipe', 'pipe'] 
-    });
-
-    // 標準出力も捕捉
-    child.stdout.on('data', data => {
-        logBuffers.push(String(data).trim());
-    });
-
-    child.stderr.on('data', data => {
-        const dataStr = String(data);
-        if (!dataStr.startsWith('frame=')) {
-            logBuffers.push(dataStr.trim());
-        }
-    });
-
-    child.on('exit', code => {
-        const isError = code !== 0;
-        
-        if (!ffmpegLogOutOnlyOnError || isError) {
-            console.log('FFmpeg messages:', logBuffers.join('\n'));
-        }
-
-        const elapsed = parseFloat(process.uptime() - startTime);
-        const logs = {
-            outputArgs: outputArgs.join(' '),
-            duration: convertSecToTime(duration),
-            elapsedTime: convertSecToTime(elapsed),
-            averageSpeed: duration > 0 ? Math.floor(duration / elapsed) + 'x' : 'N/A',
-            useCodec, cutSecond,
-            subtitlesIncluded: hasValidSubtitles,
-            metadataIncluded: metadataArgs.length > 0,
-            audioCodec: audioCodec,
-            ignoreTags: ignoreTags,
-            splitTracks: splitTracks
-        };
-        
-        if (isError) {
-            console.error('Error code:' + code, logs);
-            process.exit(code);
-        } else {
-            console.log('Successfully encoded:', logs);
-        }
-    });
-
-    child.on('error', error => {
-        console.error('Spawn error:', error);
-        process.exit(1);
-    });
-
-    process.on('SIGINT', () => child.kill('SIGINT'));
-})();
+    
+    return useCodec;
+}
 
 // すべての字幕ストリームを検出する包括的な関数
 function detectAllSubtitleStreams() {
@@ -898,6 +771,187 @@ function generateSplitOutputs() {
     
     return outputs;
 }
+
+// メイン処理
+(() => {
+    // デバッグモードを有効にする
+    const DEBUG_MODE = true;
+    
+    if (DEBUG_MODE) {
+        debugAllStreams();
+    }
+    
+    // ビデオコーデックを動的に決定
+    const useCodec = getVideoCodec();
+    console.log(`Final video codec selection: ${useCodec}`);
+    
+    const useCodecPreArgs = [];
+    const useCodecPostArgs = [];
+
+    if (useCodec === 'h264_qsv') {
+        useCodecPreArgs.push('-fflags', '+genpts'); 
+        useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
+        useCodecPostArgs.push('-preset', 'fast');
+        useCodecPostArgs.push('-global_quality', '20');
+    } else if (useCodec === 'libx264') {
+        useCodecPreArgs.push('-fflags', '+genpts'); 
+        useCodecPostArgs.push('-vf', 'yadif');
+        useCodecPostArgs.push('-preset', 'fast');
+        useCodecPostArgs.push('-crf', '23');
+    } else if (useCodec === 'h264_vaapi') {
+        useCodecPreArgs.push('-hwaccel', 'vaapi');
+        useCodecPreArgs.push('-hwaccel_device', '/dev/dri/renderD128');
+        useCodecPostArgs.push('-vf', 'format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=1280:h=720');
+        useCodecPostArgs.push('-compression_level', '1');
+        useCodecPostArgs.push('-global_quality', '20');
+    }
+
+    // 音声コーデックを決定
+    const audioCodec = getAudioCodec();
+    
+    // 字幕設定 - libaribb24の可用性をチェックしてから取得
+    const hasLibaribb24 = checkLibaribb24Availability();
+    const sub = getSubTitlesArg(hasLibaribb24);
+    const audio = getAudioArgs(audioCodec);
+    
+    // 固定で3秒カット
+    const cutSecond = fixedCutSecond;
+    const ss = cutSecond > 0 ? ['-ss', cutSecond.toString()] : [];
+
+    // 字幕ストリームが有効かどうかをチェック
+    const hasValidSubtitles = sub.map.length > 0;
+    
+    // メタデータ引数の準備
+    const metadataArgs = [];
+    if (metadataDescription) {
+        // メタデータの改行をスペースに置換して問題を回避
+        const cleanDescription = metadataDescription.replace(/\n/g, ' ');
+        metadataArgs.push('-metadata', `description=${cleanDescription}`);
+    }
+    if (metadataTitle) {
+        metadataArgs.push('-metadata', `title=${metadataTitle}`);
+    }
+    if (metadataDate) {
+        metadataArgs.push('-metadata', `date=${metadataDate}`);
+    }
+    if (metadataGenre) {
+        metadataArgs.push('-metadata', `genre=${metadataGenre}`);
+    }
+    
+    // FFmpeg引数の組み立て
+    let outputArgs;
+    let additionalOutputs = [];
+    
+    if (splitTracks) {
+        // 分割出力モード
+        console.log('Split tracks mode: generating separate files for each stream');
+        additionalOutputs = generateSplitOutputs();
+    }
+    
+    if (hasValidSubtitles) {
+        // 字幕ありでエンコード
+        outputArgs = [
+            '-y',
+            ...getAnalyze(),
+            ...sub.fix,
+            ...useCodecPreArgs,  // 入力ファイルの前に追加
+            ...ss,
+            '-i', getEnv('INPUT'),
+            '-map', '0:v',
+            '-c:v', useCodec,
+            ...audio.args,
+            ...useCodecPostArgs, // 入力ファイルの後に追加
+            ...metadataArgs,     // メタデータを追加
+            ...sub.map,
+            getEnv('OUTPUT'),
+            ...additionalOutputs
+        ];
+        console.log('Encoding with subtitles' + (splitTracks ? ' and split tracks' : ''));
+    } else {
+        // 字幕なしでエンコード
+        outputArgs = [
+            '-y',
+            ...getAnalyze(),
+            ...sub.fix,
+            ...useCodecPreArgs,  // 入力ファイルの前に追加
+            ...ss,
+            '-i', getEnv('INPUT'),
+            '-map', '0:v',
+            '-c:v', useCodec,
+            ...audio.args,
+            ...useCodecPostArgs, // 入力ファイルの後に追加
+            ...metadataArgs,     // メタデータを追加
+            getEnv('OUTPUT'),
+            ...additionalOutputs
+        ];
+        console.log('Encoding without subtitles' + (splitTracks ? ' with split tracks' : ''));
+    }
+
+    console.log('Input file:', getEnv('INPUT'));
+    console.log('Output file:', getEnv('OUTPUT'));
+    if (splitTracks) {
+        console.log('Additional split track files will be generated');
+    }
+    console.log('FFmpeg command:', 'ffmpeg', outputArgs.join(' '));
+
+    // 実行処理
+    const durationInfo = getFFprobe('-show_format');
+    const duration = durationInfo && durationInfo.format ? durationInfo.format.duration : 0;
+    const startTime = process.uptime();
+    const logBuffers = [];
+
+    const child = spawn(getEnv('FFMPEG'), outputArgs, { 
+        stdio: ['ignore', 'pipe', 'pipe'] 
+    });
+
+    // 標準出力も捕捉
+    child.stdout.on('data', data => {
+        logBuffers.push(String(data).trim());
+    });
+
+    child.stderr.on('data', data => {
+        const dataStr = String(data);
+        if (!dataStr.startsWith('frame=')) {
+            logBuffers.push(dataStr.trim());
+        }
+    });
+
+    child.on('exit', code => {
+        const isError = code !== 0;
+        
+        if (!ffmpegLogOutOnlyOnError || isError) {
+            console.log('FFmpeg messages:', logBuffers.join('\n'));
+        }
+
+        const elapsed = parseFloat(process.uptime() - startTime);
+        const logs = {
+            outputArgs: outputArgs.join(' '),
+            duration: convertSecToTime(duration),
+            elapsedTime: convertSecToTime(elapsed),
+            averageSpeed: duration > 0 ? Math.floor(duration / elapsed) + 'x' : 'N/A',
+            useCodec, cutSecond,
+            subtitlesIncluded: hasValidSubtitles,
+            metadataIncluded: metadataArgs.length > 0,
+            audioCodec: audioCodec,
+            ignoreTags: ignoreTags,
+            splitTracks: splitTracks
+        };
+        
+        if (isError) {
+            console.error('Error code:' + code, logs);
+            process.exit(code);
+        } else {
+            console.log('Successfully encoded:', logs);
+        }
+    });
+
+    child.on('error', error => {
+        console.error('Spawn error:', error);
+        process.exit(1);
+    });
+
+    process.on('SIGINT', () => child.kill('SIGINT'));
+})();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // Time stamp: 2025/11/24
