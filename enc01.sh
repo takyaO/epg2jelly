@@ -158,10 +158,10 @@ trim() {
         done
     done < "$TRIMFILE"
 
-    TITLE=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
-    DATE=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
-    DESC=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
-    GENRE=$(ffprobe -v error -show_entries format_tags=genre -of default=nw=1:nk=1 "$INPUT")
+    for tag in TITLE DATE DESC GENRE; do
+	eval "$(ffprobe -v error -show_entries format_tags=$tag \
+	        -of default=nw=1:nk=1 "$INPUT" | xargs printf '%s="%s"\n' "$tag")"
+    done
 
     ffmpeg -hide_banner -loglevel error -y \
         -f concat -safe 0 -i "$PARTS_LIST" \
@@ -271,6 +271,7 @@ EOF
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
     cd "$SOURCEDIR"
     if [ -f "$FILE" ]; then
+	start_time=$(date +%s)
         FILENAME=${FILE%.*}
         GRSTRING=$(echo "$FILENAME" | sed -n 's/.*\(GR[0-9][0-9]\).*/\1/p')
 
@@ -307,5 +308,10 @@ EOF
 	fi	
 
         ./processed.py "$FILE" || true
+	end_time=$(date +%s)
+	duration=$((end_time - start_time))
+	minutes=$((duration / 60))
+	seconds=$((duration % 60))
+	echo "RUN TIME; $minutes min $seconds sec"
     fi
 done
