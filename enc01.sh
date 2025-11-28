@@ -158,11 +158,11 @@ trim() {
         done
     done < "$TRIMFILE"
 
-    for tag in title date description genre; do
-	eval "$(ffprobe -v error -show_entries format_tags=$tag \
-	        -of default=nw=1:nk=1 "$INPUT" | xargs printf '%s="%s"\n' "$tag")"
-    done
-
+    title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
+    date=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
+    description=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
+    genre=$(ffprobe -v error -show_entries format_tags=genre -of default=nw=1:nk=1 "$INPUT")
+    
     ffmpeg -hide_banner -loglevel error -y \
         -f concat -safe 0 -i "$PARTS_LIST" \
         -c copy -map 0 \
