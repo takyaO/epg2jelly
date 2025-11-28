@@ -158,7 +158,7 @@ trim() {
         done
     done < "$TRIMFILE"
 
-    for tag in TITLE DATE DESC GENRE; do
+    for tag in title date description genre; do
 	eval "$(ffprobe -v error -show_entries format_tags=$tag \
 	        -of default=nw=1:nk=1 "$INPUT" | xargs printf '%s="%s"\n' "$tag")"
     done
@@ -167,10 +167,10 @@ trim() {
         -f concat -safe 0 -i "$PARTS_LIST" \
         -c copy -map 0 \
         -map_metadata -1 \
-        -metadata title="$TITLE" \
-        -metadata date="$DATE" \
-        -metadata description="$DESC" \
-        -metadata genre="$GENRE" \
+        -metadata title="$title" \
+        -metadata date="$date" \
+        -metadata description="$description" \
+        -metadata genre="$genre" \
         "$OUTPUT"
 
     rm -rf "$TEMPDIR"
