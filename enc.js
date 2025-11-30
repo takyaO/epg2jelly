@@ -390,7 +390,8 @@ function getSubTitlesArg(hasLibaribb24) {
                 for (let i = 0; i < subtitleStreams.length; i++) {
                     map.push('-map', `0:${subtitleStreams[i]}?`);
                     map.push(`-c:s:${i}`, 'mov_text');
-                    map.push(`-metadata:s:${i}`, 'language=jpn');
+                    // 修正: 字幕ストリームのメタデータ指定を修正
+                    map.push(`-metadata:s:s:${i}`, 'language=jpn');
                 }
                 console.log('Mapped subtitle streams:', map);
             } else {
@@ -399,7 +400,8 @@ function getSubTitlesArg(hasLibaribb24) {
                 // フォールバック: すべての字幕ストリームをマップ
                 map.push('-map', '0:s?');
                 map.push('-c:s', 'mov_text');
-                map.push('-metadata:s:0', 'language=jpn');
+                // 修正: 字幕ストリームのメタデータ指定を修正
+                map.push('-metadata:s:s:0', 'language=jpn');
             }
         } else {
             console.log('libaribb24 is not available, skipping subtitle mapping to avoid errors');
@@ -791,7 +793,7 @@ function generateSplitOutputs() {
     if (useCodec === 'h264_qsv') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
-        useCodecPostArgs.push('-preset', 'fast');
+        useCodecPostArgs.push('-preset', 'medium');
         useCodecPostArgs.push('-global_quality', '20');
     } else if (useCodec === 'libx264') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
@@ -954,4 +956,4 @@ function generateSplitOutputs() {
 })();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/24
+// Time stamp: 2025/11/30
