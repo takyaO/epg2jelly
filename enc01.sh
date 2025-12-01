@@ -93,43 +93,34 @@ trim() {
     INDEX=0
     > "$PARTS_LIST"
 
-    # --- ストリーム判定（入力ファイルごとに実行） ---
-    # 字幕の有無
+    # --- ストリーム判定 ---
     if ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$INPUT" | grep -q .; then
-	HAS_SUBS=yes
+        HAS_SUBS=yes
+        # 字幕ストリーム(1つ目)の言語タグを取得する
+        SUB_LANG=$(ffprobe -v error -select_streams s:0 -show_entries stream_tags=language -of default=nw=1:nk=1 "$INPUT")
     else
-	HAS_SUBS=no
+        HAS_SUBS=no
+        SUB_LANG=""
     fi
 
-    # 音声ストリーム数（数値）
+    # 音声ストリーム数
     AUDIO_COUNT=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$INPUT" | wc -l | tr -d ' ')
 
-    # --- オプション配列を組み立てる ---
-    STREAM_OPT=()      # -map / copy_unknown 等
-    CODEC_OPT=()       # -c:a:0 など音声/字幕のコーデック指定
+    STREAM_OPT=()
+    CODEC_OPT=()
 
-    # まず基本的に map 指定は必要なら付ける（字幕か複数音声）
     if [[ "$HAS_SUBS" == "yes" || "$AUDIO_COUNT" -gt 1 ]]; then
-	STREAM_OPT+=(-map 0 -copy_unknown)
+        STREAM_OPT+=(-map 0 -copy_unknown)
     fi
 
-    # 字幕があるなら明示的に字幕はコピーし、language を自動継承
     if [[ "$HAS_SUBS" == "yes" ]]; then
-	SUB_LANG=$(ffprobe -v error -select_streams s \
-			   -show_entries stream_tags=language \
-			   -of default=nw=1:nk=1 "$INPUT")
-	CODEC_OPT+=(-c:s copy)
-	# 言語タグが取得できたときのみ追加（空なら追加しない）
-	if [[ -n "$SUB_LANG" ]]; then
-            CODEC_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
-	fi
+        CODEC_OPT+=(-c:s copy)
     fi
 
-    # --- すべての音声ストリームを再エンコードする --- ずれ対策
     if [[ "$AUDIO_COUNT" -gt 0 ]]; then
-	for ((i=0; i<"$AUDIO_COUNT"; i++)); do
+        for ((i=0; i<"$AUDIO_COUNT"; i++)); do
             CODEC_OPT+=(-c:a:"$i" "$audio_codec" -b:a:"$i" 192k)
-	done
+        done
     fi
 
     while read -r line; do
@@ -146,18 +137,20 @@ trim() {
 
             if (( $(echo "$STARTSEC >= 5" | bc -l) )); then
                 START_BEFORE=$(echo "$STARTSEC - 5" | bc -l | sed 's/^\./0./')
-		ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
-		       "${FFMPEG_OPTS[@]}" \
-		       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-		       -avoid_negative_ts make_zero \
-		       "$PART"
-	    else
-		ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
-		       "${FFMPEG_OPTS[@]}" \
-		       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-		       -avoid_negative_ts make_zero \
-		       "$PART"
-	    fi
+                ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
+                       "${FFMPEG_OPTS[@]}" \
+                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+                       -map_metadata 0 \
+                       -avoid_negative_ts make_zero \
+                       "$PART"
+            else
+                ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
+                       "${FFMPEG_OPTS[@]}" \
+                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+                       -map_metadata 0 \
+                       -avoid_negative_ts make_zero \
+                       "$PART"
+            fi
 
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
@@ -169,19 +162,23 @@ trim() {
     date=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
     description=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
     genre=$(ffprobe -v error -show_entries format_tags=genre -of default=nw=1:nk=1 "$INPUT")
-    SUB_LANG=$(ffprobe -v error -select_streams s \
-		       -show_entries stream_tags=language \
-		       -of default=nw=1:nk=1 "$INPUT")
     
+    METADATA_OPT=()
+    METADATA_OPT+=(-metadata title="$title")
+    METADATA_OPT+=(-metadata date="$date")
+    METADATA_OPT+=(-metadata description="$description")
+    METADATA_OPT+=(-metadata genre="$genre")
+
+    # 字幕があり、言語タグが取得できていれば設定（なければ jpn を強制しても良い）
+    if [[ -n "$SUB_LANG" ]]; then
+        METADATA_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
+    fi
+
     ffmpeg -hide_banner -loglevel error -y \
         -f concat -safe 0 -i "$PARTS_LIST" \
         -c copy -map 0 \
         -map_metadata -1 \
-        -metadata title="$title" \
-        -metadata date="$date" \
-        -metadata description="$description" \
-        -metadata genre="$genre" \
-	$( [[ -n "$SUB_LANG" ]] && echo -metadata:s:s:0 language="$SUB_LANG" ) \
+        "${METADATA_OPT[@]}" \
         "$OUTPUT"
 
     rm -rf "$TEMPDIR"
