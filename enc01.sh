@@ -181,7 +181,7 @@ trim() {
         -metadata date="$date" \
         -metadata description="$description" \
         -metadata genre="$genre" \
-	$( [[ -n "$SUB_LANG" ]] && echo -metadata:s:s:0 language="$SUB_LANG" ) \	
+	$( [[ -n "$SUB_LANG" ]] && echo -metadata:s:s:0 language="$SUB_LANG" ) \
         "$OUTPUT"
 
     rm -rf "$TEMPDIR"
