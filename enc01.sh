@@ -113,9 +113,16 @@ trim() {
 	STREAM_OPT+=(-map 0 -copy_unknown)
     fi
 
-    # 字幕があるなら明示的に字幕はコピー
+    # 字幕があるなら明示的に字幕はコピーし、language を自動継承
     if [[ "$HAS_SUBS" == "yes" ]]; then
+	SUB_LANG=$(ffprobe -v error -select_streams s \
+			   -show_entries stream_tags=language \
+			   -of default=nw=1:nk=1 "$INPUT")
 	CODEC_OPT+=(-c:s copy)
+	# 言語タグが取得できたときのみ追加（空なら追加しない）
+	if [[ -n "$SUB_LANG" ]]; then
+            CODEC_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
+	fi
     fi
 
     # --- すべての音声ストリームを再エンコードする --- ずれ対策
@@ -162,6 +169,9 @@ trim() {
     date=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
     description=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
     genre=$(ffprobe -v error -show_entries format_tags=genre -of default=nw=1:nk=1 "$INPUT")
+    SUB_LANG=$(ffprobe -v error -select_streams s \
+		       -show_entries stream_tags=language \
+		       -of default=nw=1:nk=1 "$INPUT")
     
     ffmpeg -hide_banner -loglevel error -y \
         -f concat -safe 0 -i "$PARTS_LIST" \
@@ -171,6 +181,7 @@ trim() {
         -metadata date="$date" \
         -metadata description="$description" \
         -metadata genre="$genre" \
+	$( [[ -n "$SUB_LANG" ]] && echo -metadata:s:s:0 language="$SUB_LANG" ) \	
         "$OUTPUT"
 
     rm -rf "$TEMPDIR"
