@@ -204,8 +204,7 @@ const epgsConfig = {
 // エンコード設定
 const ffmpegLogOutOnlyOnError = true;
 const progressLogOutMax = 0; // 進捗表示を無効化
-// デフォルトコーデック設定
-const useCodec = 'libx264'; //libx264, h264_qsv, h264_vaapi
+
 // 固定で3秒カット
 const fixedCutSecond = 3;
 
@@ -261,40 +260,6 @@ function checkLibfdkAacAvailability() {
     }
 }
 
-// h264_qsvの利用可能性をチェック
-function checkH264QsvAvailability() {
-    try {
-        // エンコーダーリストを確認
-        const encodersOptions = ['-encoders'];
-        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
-        const hasH264Qsv = encodersResult.includes('h264_qsv') && encodersResult.includes('H.264');
-        
-        console.log(`h264_qsv detection - Encoders: ${hasH264Qsv}`);
-        
-        // さらにハードウェアデバイスの可用性もチェック（オプション）
-        if (hasH264Qsv) {
-            try {
-                const hwaccelResult = execFileSync(getEnv('FFMPEG'), ['-hwaccels'], { encoding: 'utf8' });
-                const hasQsvHwaccel = hwaccelResult.includes('qsv');
-                console.log(`h264_qsv hardware acceleration available: ${hasQsvHwaccel}`);
-                
-                // ハードウェアアクセラレーションがない場合は利用不可と判断
-                if (!hasQsvHwaccel) {
-                    console.log('h264_qsv encoder exists but no QSV hardware acceleration available');
-                    return false;
-                }
-            } catch (hwError) {
-                console.log('Could not check hardware acceleration, assuming h264_qsv is available');
-            }
-        }
-        
-        return hasH264Qsv;
-    } catch (error) {
-        console.error('Error checking h264_qsv availability:', error.message);
-        return false;
-    }
-}
-
 // 利用可能な音声コーデックを決定
 function getAudioCodec() {
     const hasLibfdkAac = checkLibfdkAacAvailability();
@@ -305,19 +270,136 @@ function getAudioCodec() {
 
 // 利用可能なビデオコーデックを決定
 function getVideoCodec() {
-    let useCodec = 'h264_qsv'; // デフォルト
+    let useCodec = 'libx264'; // デフォルトをlibx264に設定
     
-    // h264_qsvが利用可能かチェック
+    // まずh264_qsvをチェック
     const hasH264Qsv = checkH264QsvAvailability();
-    
-    if (!hasH264Qsv) {
-        useCodec = 'libx264';
-        console.log('h264_qsv not available, falling back to libx264');
-    } else {
+    if (hasH264Qsv) {
+        useCodec = 'h264_qsv';
         console.log('Using h264_qsv video codec');
+        return useCodec;
     }
     
+    // h264_qsvが使えない場合、h264_vaapiをチェック
+    const hasH264Vaapi = checkH264VaapiAvailability();
+    if (hasH264Vaapi) {
+        useCodec = 'h264_vaapi';
+        console.log('Using h264_vaapi video codec');
+        return useCodec;
+    }
+    
+    // どちらも使えない場合はlibx264にfallback
+    console.log('h264_qsv and h264_vaapi not available, falling back to libx264');
     return useCodec;
+}
+
+function checkH264QsvAvailability() {
+    try {
+        // エンコーダーリストを確認
+        const encodersOptions = ['-encoders'];
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
+        const hasH264Qsv = encodersResult.includes('h264_qsv') && encodersResult.includes('H.264');
+
+        console.log(`h264_qsv detection - Encoders: ${hasH264Qsv}`);
+
+        // ハードウェアデバイスの可用性もチェック
+        if (hasH264Qsv) {
+            try {
+                const hwaccelResult = execFileSync(getEnv('FFMPEG'), ['-hwaccels'], { encoding: 'utf8' });
+                const hasQsvHwaccel = hwaccelResult.includes('qsv');
+                console.log(`h264_qsv hardware acceleration available: ${hasQsvHwaccel}`);
+
+                // ハードウェアアクセラレーションがない場合は利用不可と判断
+                if (!hasQsvHwaccel) {
+                    console.log('h264_qsv encoder exists but no QSV hardware acceleration available');
+                    return false;
+                }
+                
+                // QSVデバイスの確認（より詳細なチェック）- フレーム数制限を追加
+                try {
+                    const devicesResult = execFileSync(getEnv('FFMPEG'), [
+                        '-f', 'lavfi', 
+                        '-i', 'nullsrc=size=640x480:d=0.1', // 0.1秒の短いテスト
+                        '-c:v', 'h264_qsv',
+                        '-frames:v', '1', // 1フレームのみ
+                        '-f', 'null', '-'
+                    ], {
+                        encoding: 'utf8',
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                        timeout: 10000 // 10秒タイムアウト
+                    });
+                    console.log('h264_qsv device test passed');
+                    return true;
+                } catch (testError) {
+                    console.log('h264_qsv device test failed:', testError.message);
+                    return false;
+                }
+            } catch (hwError) {
+                console.log('Could not verify QSV hardware acceleration, assuming h264_qsv is not available');
+                return false;
+            }
+        }
+
+        return false;
+    } catch (error) {
+        console.error('Error checking h264_qsv availability:', error.message);
+        return false;
+    }
+}
+
+function checkH264VaapiAvailability() {
+    try {
+        // エンコーダーリストを確認
+        const encodersOptions = ['-encoders'];
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
+        const hasH264Vaapi = encodersResult.includes('h264_vaapi') && encodersResult.includes('H.264');
+
+        console.log(`h264_vaapi detection - Encoders: ${hasH264Vaapi}`);
+
+        // ハードウェアデバイスの可用性もチェック
+        if (hasH264Vaapi) {
+            try {
+                const hwaccelResult = execFileSync(getEnv('FFMPEG'), ['-hwaccels'], { encoding: 'utf8' });
+                const hasVaapiHwaccel = hwaccelResult.includes('vaapi');
+                console.log(`h264_vaapi hardware acceleration available: ${hasVaapiHwaccel}`);
+
+                if (!hasVaapiHwaccel) {
+                    console.log('h264_vaapi encoder exists but no VAAPI hardware acceleration available');
+                    return false;
+                }
+                
+                // VAAPIデバイスの確認（より詳細なチェック）- フレーム数制限を追加
+                try {
+                    const testResult = execFileSync(getEnv('FFMPEG'), [
+                        '-init_hw_device', 'vaapi=va:', 
+                        '-f', 'lavfi', 
+                        '-i', 'nullsrc=size=640x480:d=0.1',
+                        '-vf', 'format=nv12,hwupload',
+                        '-c:v', 'h264_vaapi',
+                        '-frames:v', '1',
+                        '-f', 'null', '-'
+                    ], {
+                        encoding: 'utf8',
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                        timeout: 10000 // 10秒タイムアウト
+                    });
+                    console.log('h264_vaapi device test passed');
+                    return true;
+                } catch (testError) {
+                    console.log('h264_vaapi device test failed:', testError.message);
+                    return false;
+                }
+            } catch (hwError) {
+                console.log('Could not verify VAAPI hardware acceleration, assuming h264_vaapi is not available');
+                return false;
+            }
+        }
+
+        return false;
+    } catch (error) {
+        console.error('Error checking h264_vaapi availability:', error.message);
+        return false;
+    }
 }
 
 // すべての字幕ストリームを検出する包括的な関数
@@ -793,12 +875,12 @@ function generateSplitOutputs() {
     if (useCodec === 'h264_qsv') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
-        useCodecPostArgs.push('-preset', 'medium');
+        useCodecPostArgs.push('-preset', 'slow');
         useCodecPostArgs.push('-global_quality', '20');
     } else if (useCodec === 'libx264') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif');
-        useCodecPostArgs.push('-preset', 'fast');
+        useCodecPostArgs.push('-preset', 'slow');
         useCodecPostArgs.push('-crf', '23');
     } else if (useCodec === 'h264_vaapi') {
         useCodecPreArgs.push('-hwaccel', 'vaapi');
@@ -956,4 +1038,4 @@ function generateSplitOutputs() {
 })();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/11/30
+// Time stamp: 2025/12/02
