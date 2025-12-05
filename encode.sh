@@ -46,28 +46,39 @@ fi
 # --- 未処理ファイルの合計サイズ計算関数 ---
 calculate_total_size() {
     local total_bytes=0
-    # ファイルのベースディレクトリを決定
     local base_dir=""
 
+    # SOURCEDIR が設定されていなければ 0 を返す（エラーを出さない）
     if [ -n "$SOURCEDIR" ]; then
         base_dir="$SOURCEDIR"
     else
-        echo "Error: SOURCEDIR is not set in env.sh"
-        return 1
+        echo "0"
+        return 0
     fi
 
-    # 未処理ファイルのリストを取得し、各ファイルのサイズを計算
+    # TOPROCESS がコマンドでなければ 0 を返す
+    if ! command -v "$TOPROCESS" >/dev/null 2>&1; then
+        echo "0"
+        return 0
+    fi
+
+    # while ループでファイル一覧を処理
     while IFS= read -r filename; do
+        # 空行はスキップ
+        [ -z "$filename" ] && continue
+
         file_path="$base_dir/$filename"
+
+        # ファイルがなければスキップ（警告も出さない）
         if [ -f "$file_path" ]; then
-            size=$(stat -c%s "$file_path") 
+            size=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
             total_bytes=$((total_bytes + size))
-        else
-            echo "Warning: File not found: $file_path"
         fi
-    done < <("$TOPROCESS")
+    done < <("$TOPROCESS" 2>/dev/null)
+
     # GB単位に変換
     local total_gb=$(awk "BEGIN {printf \"%.2f\", $total_bytes / (1024*1024*1024)}")
+
     echo "$total_gb"
 }
 
