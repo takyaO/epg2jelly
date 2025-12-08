@@ -134,9 +134,9 @@ fi
 ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//' ) #  [字] 削除
 
 if echo "$ORIGINAL" | grep -qE 'ドラマ[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラマ[^「『]*[「『]([^」』]*)[」』].*/\1/p') #木曜ドラマ「恋愛禁止」
+    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラマ[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #木曜ドラマ「恋愛禁止」
 elif echo "$ORIGINAL" | grep -qE '懐ドラ[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラ[^「『]*[「『]([^」』]*)[」』].*/\1/p') # 懐ドラ「はるちゃん6」 
+    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラ[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') # 懐ドラ「はるちゃん6」 
 elif echo "$ORIGINAL" | grep -qE '劇場[^「『]*[「『][^」』]+[」』]'; then
     PROGRAM=$(echo "$ORIGINAL" | sed -n 's/.*劇場[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #日曜劇場「１９番目のカルテ」…
 elif echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
