@@ -45,127 +45,167 @@ if [ ! -f "$LIST_FILE" ]; then
     echo "#番組フォルダ名として優先される番組名のリスト。不完全ならば手動で修正する。" > "$LIST_FILE"
 fi
 
-# 区切り文字の優先順位リスト
-delimiter_order=("＃" "♯" "#" "第" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『" " "  "　"  "_" "[")
-# 優先順序: "【"  or "　"
-# 【を優先させるが、先頭の場合だけ別途対処
+extractProgram() {
+    # 引数受け取り
+    local input_file="$1"
 
-# 区切り文字と対応するセカンドデリミタを定義
-declare -A delimiter_pairs=(
-    # ドラマ、シリーズもの
-    ["話"]=""  # 「話」にはセカンドデリミタ不要
-    ["＃"]="_"
-    ["♯"]="_"
-    ["#"]="_"
-    ["第"]="_"
-    ["最終回"]="_"
-    ["最終話"]="_"
-    ["最終首"]="_"
-    ["("]=")"
-    ["（"]="）"
-    # バラエティーで多い
-    ["★"]="_"
-    ["☆"]="_"
-    ["▼"]="_"
-    ["▽"]="_"
-    ["◆"]="_"
-    [" "]="_"
-    # アニメで多い
-    ["【"]="】"
-    ["「"]="」"
-    ["『"]="』"
-    # 要検討
-    ["["]="."
-    ["　"]="_"
-    ["_"]="."
-)
+    # 関数内部で使う変数をlocal宣言（呼び出し元の変数を上書きしないため）
+    local BASENAME FILENAME PROGRAM EPISODE ORIGINAL rest temp delimiter found_delimiter second_delimiter pos
+    local -a delimiter_order MATCH_LIST
+    local -A delimiter_pairs
 
-BASENAME=$(basename "$input_file")
+    # 区切り文字の優先順位リスト
+    delimiter_order=("＃" "♯" "#" "第" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『" " "  "　"  "_" "[")
 
-#先頭の【夜ドラ】 は削除: NHKに多い
-FILENAME=$(echo "$BASENAME" | sed 's/^【[^】]*】//')
+    # 区切り文字と対応するセカンドデリミタを定義
+    delimiter_pairs=(
+        # ドラマ、シリーズもの
+        ["話"]="" 
+        ["＃"]="_"
+        ["♯"]="_"
+        ["#"]="_"
+        ["第"]="_"
+        ["最終回"]="_"
+        ["最終話"]="_"
+        ["最終首"]="_"
+        ["("]=")"
+        ["（"]="）"
+        # バラエティーで多い
+        ["★"]="_"
+        ["☆"]="_"
+        ["▼"]="_"
+        ["▽"]="_"
+        ["◆"]="_"
+        [" "]="_"
+        # アニメで多い
+        ["【"]="】"
+        ["「"]="」"
+        ["『"]="』"
+        # 要検討
+        ["["]="."
+        ["　"]="_"
+        ["_"]="."
+    )
 
+    BASENAME=$(basename "$input_file")
 
-found_delimiter=""
-for delimiter in "${delimiter_order[@]}"; do
-    if [[ "$FILENAME" == *"$delimiter"* ]]; then
-        found_delimiter="$delimiter"
-        break
-    fi
-done
+    # 先頭文字列削除
+    FILENAME=$(echo "$BASENAME" | sed -e 's/^【[^】]*】//' \
+                                     -e 's/^プチプチ・アニメ[[:space:]]*//' \
+                                     -e 's/^アニメ[[:space:]]*//' \
+                                     -e 's/^ミニアニメ[[:space:]]*//' \
+                                     -e 's/^限界アニメ[[:space:]]*//' \
+                                     -e 's/^ＴＶアニメ[[:space:]]*//' \
+                                     -e 's/^ドラマブレイク[[:space:]]*//' \
+                                     -e 's/^.*曜ミステリー[[:space:]]*//' \
+                                     -e 's/^サスペンス[[:space:]]*//' \
+                                     -e 's/^＜[^＞]*＞[[:space:]]*//' \
+                                     -e 's/^.国ドラマ[[:space:]]*//' \
+                                     -e 's/^懐ドラ[[:space:]]*//' \
+                                     -e 's/^韓流朝ドラ６[[:space:]]*//' \
+                                     -e 's/^台湾ドラマ[[:space:]]*//' \
+                                     -e 's/^大河ドラマ[[:space:]]*//' \
+                                     -e 's/^連続テレビ小説[[:space:]]*//' \
+                                     -e 's/^時代劇[[:space:]]*//' \
+                                     -e 's/^.*曜ドラマ[[:space:]]*//' \
+                                     -e 's/^ドラマ２４[[:space:]]*//' \
+                                     -e 's/^日５[[:space:]]*//' \
+                                     -e 's/^映画[[:space:]]*//' \
+                                     -e 's/^映画の時間[[:space:]]*//' \
+                                     -e 's/^午後ロー[[:space:]]*//' \
+                                     -e 's/^金曜ロードショー[[:space:]]*//' \
+                                     -e 's/^.*曜劇場[[:space:]]*//')
+    
+    found_delimiter=""
+    for delimiter in "${delimiter_order[@]}"; do
+        # pattern matching
+        if [[ "$FILENAME" == *"$delimiter"* ]]; then
+            found_delimiter="$delimiter"
+            break
+        fi
+    done
 
-if [[ -n "$found_delimiter" ]]; then
-    delimiter=$found_delimiter
-    if [[ "$delimiter" == "話" ]]; then
-        # 「数字+話」で分割（全角・半角数字対応）
-        if [[ "$FILENAME" =~ ([０-９0-9]{1,2}話) ]]; then
-            pos=${BASH_REMATCH[0]}  # マッチした部分（例: "２話"）
-            PROGRAM="${FILENAME%%$pos*}"
-            EPISODE="$pos"
-#            break
-#	fi
-	else
-            # 「話」の前が数字でない場合:  孤独のグルメ全話イッキ見！
-            if [[ "$FILENAME" == *"話"* ]]; then
-		temp="${FILENAME%話*}"
-                PROGRAM="${temp%?}"  
-                EPISODE="${FILENAME#${PROGRAM}}"
+    if [[ -n "$found_delimiter" ]]; then
+        delimiter="$found_delimiter"
+        if [[ "$delimiter" == "話" ]]; then
+            # 「数字+話」で分割（全角・半角数字対応）
+            if [[ "$FILENAME" =~ ([０-９0-9]{1,2}話) ]]; then
+                pos=${BASH_REMATCH[0]}  # マッチした部分
+                PROGRAM="${FILENAME%%$pos*}"
+                EPISODE="$pos"
+            else
+                # 「話」の前が数字でない場合
+                PROGRAM="${FILENAME}"
+#                if [[ "$FILENAME" == *"話"* ]]; then
+#                    temp="${FILENAME%話*}"
+#                    PROGRAM="${temp%?}"
+#                    EPISODE="${FILENAME#${PROGRAM}}"
+#                fi
+            fi  
+        elif [[ "$FILENAME" == *"$delimiter"* ]]; then
+            PROGRAM="${FILENAME%%$delimiter*}"
+            rest="${FILENAME#*$delimiter}"
+            second_delimiter="${delimiter_pairs[$delimiter]}"
+            
+            if [[ -n "$second_delimiter" && "$rest" == *"$second_delimiter"* ]]; then
+                EPISODE="${rest%%$second_delimiter*}"
+            else
+                EPISODE="$rest"
             fi
-	fi	
-    elif [[ "$FILENAME" == *"$delimiter"* ]]; then
-        PROGRAM="${FILENAME%%$delimiter*}"
-        rest="${FILENAME#*$delimiter}"
-        second_delimiter="${delimiter_pairs[$delimiter]}"
-        if [[ -n "$second_delimiter" && "$rest" == *"$second_delimiter"* ]]; then
-            EPISODE="${rest%%$second_delimiter*}"
-        else
-            EPISODE="$rest"
+            
+            if [[ "$delimiter" == "第" || "$delimiter" == "[" || "$delimiter" == "最終回" || "$delimiter" == "最終話" || "$delimiter" == "最終首" ]]; then
+                EPISODE="$delimiter$EPISODE"
+            fi
         fi
-        if [[ "$delimiter" == "第" || "$delimiter" == "[" || "$delimiter" == "最終回" || "$delimiter" == "最終話" || "$delimiter" == "最終首" ]]; then
-            EPISODE="$delimiter$EPISODE"
-        fi
-#        break
+    else
+        PROGRAM="$FILENAME"    
     fi
-else
-    PROGRAM="$FILENAME"    
-fi
 
-# 番組名抽出
-ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//' ) #  [字] 削除
+    # 番組名抽出処理
+    ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//' ) # [字] 削除
 
-if echo "$ORIGINAL" | grep -qE 'ドラマ[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラマ[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #木曜ドラマ「恋愛禁止」
-elif echo "$ORIGINAL" | grep -qE '懐ドラ[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -E 's/.*ドラ[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') # 懐ドラ「はるちゃん6」 
-elif echo "$ORIGINAL" | grep -qE '劇場[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -n 's/.*劇場[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #日曜劇場「１９番目のカルテ」…
-elif echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -n 's/^[「『]\([^」』]*\)[」』].*/\1/p') #「放送局占拠」…
-elif echo "$ORIGINAL" | grep -qE 'アニメ[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -n 's/.*アニメ[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #アニメ「暗殺教室」
-elif echo "$ORIGINAL" | grep -qE '日５[^「『]*[「『][^」』]+[」』]'; then
-    PROGRAM=$(echo "$ORIGINAL" | sed -n 's/.*日５[^「『]*[「『]\([^」』]*\)[」』].*/\1/p') #日５「魔法少女まどか☆マギカ
-else
-    PROGRAM=$(echo "$ORIGINAL" | sed -e 's/【[^】]*】//g' \
-                                     -e 's/＜[^＞]*＞//g' \
-                                     -e 's/[「『][^」』]*[」』].*//g' \
-                                     -e 's/◆.*$//' \
-                                     -e 's/▼.*$//' \
-                                     -e 's/▽.*$//' \
-                                     -e 's/^アニメ//' \
-                                     -e 's/[ 　]*$//g' \
-                                     -e 's/^[ 　]*//g' \
-                                     -e 's/[ 　].*$//' \
-	   )
-fi
+    # ヒューリスティックな抽出（grep -E と sed -E で統一）
+    if echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
+        PROGRAM=$(echo "$ORIGINAL" | sed -nE 's/^[「『]([^」』]*)[」』].*/\1/p')
+    else
+        # フォールバック処理
+        PROGRAM=$(echo "$ORIGINAL" | sed -e 's/【[^】]*】//g' \
+                                         -e 's/＜[^＞]*＞//g' \
+                                         -e 's/[「『][^」』]*[」』].*//g' \
+                                         -e 's/◆.*$//' \
+                                         -e 's/▼.*$//' \
+                                         -e 's/▽.*$//' \
+                                         -e 's/【.*$//g' \
+                                         -e 's/「.*$//g' \
+                                         -e 's/[ 　]*$//g' \
+                                         -e 's/^[ 　]*//g' \
+                                         -e 's/[ 　].*$//' \
+            )
+    fi
 
-EPISODE=$(echo "$EPISODE" | sed -e 's/\[[^]]*\]//g' -e 's/__.*$//' )  # [字] 削除
+    EPISODE=$(echo "$EPISODE" | sed -e 's/\[[^]]*\]//g' -e 's/__.*$//' )
 
-#却下するPROGRAM名
-MATCH_LIST=("アニメ" "プチプチ・アニメ" "ミニアニメ")
-if [ -z "$PROGRAM" ]  || [[ " ${MATCH_LIST[@]} " =~ " ${PROGRAM} " ]]; then
-    PROGRAM=$EPISODE
-fi
+#    # 却下するPROGRAM名の判定
+#    MATCH_LIST=("アニメ" "ミニアニメ" )
+#    # 配列内の要素チェック（完全一致）
+#    local is_match=0
+#    for item in "${MATCH_LIST[@]}"; do
+#        if [[ "$item" == "$PROGRAM" ]]; then
+#            is_match=1
+#            break
+#        fi
+#    done
+
+    if [[ -z "$PROGRAM" || $is_match -eq 1 ]]; then
+        PROGRAM="$EPISODE"
+    fi
+
+    # 【重要】戻り値として標準出力に書き出す
+    echo "$PROGRAM"
+}
+
+
+PROGRAM=$(extractProgram "$input_file")
 
 # リストファイルから既存のフォルダ名を検索（上から順に）
 matched_folder="$PROGRAM"
@@ -182,6 +222,7 @@ if [ -f "$LIST_FILE" ]; then
 fi
 
 PROGRAM="$matched_folder"
+
 
 # 最終的なディレクトリパス
 #final_dir="$outdir/$PROGRAM/$EPISODE"
@@ -214,4 +255,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2025/12/08
+#Time stamp: 2025/12/12
