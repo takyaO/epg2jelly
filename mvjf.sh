@@ -114,6 +114,7 @@ extractProgram() {
                                      -e 's/^映画の時間[[:space:]]*//' \
                                      -e 's/^午後ロー[[:space:]]*//' \
                                      -e 's/^金曜ロードショー[[:space:]]*//' \
+                                     -e 's/^土曜プレミアム・映画[[:space:]]*//' \
                                      -e 's/^.*曜劇場[[:space:]]*//')
     
     found_delimiter=""
@@ -255,4 +256,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2025/12/12
+#Time stamp: 2025/12/13
