@@ -163,7 +163,7 @@ extractProgram() {
     fi
 
     # 番組名抽出処理
-    ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//' ) # [字] 削除
+    ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//'  ) # [字] 削除
 
     # ヒューリスティックな抽出（grep -E と sed -E で統一）
     if echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
@@ -231,7 +231,6 @@ final_dir="$outdir/$PROGRAM"
 
 if [ "$DRY_RUN" = "true" ]; then
    # ドライランモードの場合、移動操作を行わない
-   echo "Dry run mode: $final_dir/$(basename "$input_file")"
    echo "Using folder name: $PROGRAM"
 else
     # ディレクトリを作成（存在しない場合のみ）
@@ -244,7 +243,7 @@ else
 	echo "ファイルの移動に失敗しました: $input_file -> $final_dir"
 	exit 1
     }
-    echo "ファイルが正常に移動されました: $final_dir/$(basename "$input_file")"
+    echo "ファイルが正常に移動されました: mv '$input_file' '$final_dir' "
     
     # リストファイルにフォルダ名が存在しない場合のみ追加
     if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
