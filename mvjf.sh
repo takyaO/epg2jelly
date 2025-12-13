@@ -50,7 +50,7 @@ extractProgram() {
     local input_file="$1"
 
     # 関数内部で使う変数をlocal宣言（呼び出し元の変数を上書きしないため）
-    local BASENAME FILENAME PROGRAM EPISODE ORIGINAL rest temp delimiter found_delimiter second_delimiter pos
+    local FILENAME PROGRAM EPISODE ORIGINAL rest temp delimiter found_delimiter second_delimiter pos
     local -a delimiter_order MATCH_LIST
     local -A delimiter_pairs
 
@@ -87,10 +87,8 @@ extractProgram() {
         ["_"]="."
     )
 
-    BASENAME=$(basename "$input_file")
-
     # 先頭文字列削除
-    FILENAME=$(echo "$BASENAME" | sed -e 's/^【[^】]*】//' \
+    FILENAME=$(echo "$input_file"  | sed -e 's/[\/:*?"<>|]//g'  | sed -e 's/^【[^】]*】//' \
                                      -e 's/^プチプチ・アニメ[[:space:]]*//' \
                                      -e 's/^アニメ[[:space:]]*//' \
                                      -e 's/^ミニアニメ[[:space:]]*//' \
