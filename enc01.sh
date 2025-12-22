@@ -2,7 +2,8 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset medium -threads 10)
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset medium )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -76,16 +77,27 @@ watch_iowait() {
     done
 }
 
+hms_to_sec() {
+    awk -F '[:.]' '{ printf "%.3f", ($1*3600)+($2*60)+$3+($4/1000) }' <<< "$1"
+}
+
 trim() {
+    if [ "$#" -ne 2 ]; then
+        echo "Error: trim expects 2 arguments: INPUT OUTPUT" >&2
+        return 1
+    fi
     local INPUT="$1"
-    local TRIMFILE="$2"
-    local OUTPUT="$3"
+#    local TRIMFILE="$2"
+    local OUTPUT="$2"
+    local TRIMFILE="jls_out.txt"
+    local CHAPFILE="chap_out.txt"    
     local FPS=29.97
 
-    if [ ! -s "$TRIMFILE" ]; then
-        echo "No trim info. Copying input to output..."
-        ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -c copy -map 0 "$OUTPUT"
-        exit 0
+    if [ ! -s "$CHAPFILE" ]; then
+        echo "No chapter/trim info. Copying input to output..."
+        ffmpeg -hide_banner -loglevel error -y \
+            -i "$INPUT" -c copy -map 0 "$OUTPUT"
+        return 0
     fi
 
     TEMPDIR=$(mktemp -d)
@@ -123,6 +135,12 @@ trim() {
         done
     fi
 
+    CHAP_META="$TEMPDIR/chapters.ffmeta"
+    echo ";FFMETADATA1" > "$CHAP_META"
+    OUT_OFFSET=0
+    CHAP_INDEX=1
+    LAST_START_MS=-1
+    
     while read -r line; do
         while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
             STARTF="${BASH_REMATCH[1]}"
@@ -132,6 +150,50 @@ trim() {
             ENDSEC=$(bc_calc "$ENDF / $FPS")
             DURATION=$(bc_calc "$ENDSEC - $STARTSEC")
 
+	    TRIM_LEN="$DURATION"
+
+	    START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
+	    if [ "$START_MS" -le "$LAST_START_MS" ]; then
+		SKIP=1
+	    else
+		SKIP=0
+	    fi
+	    if [ "$SKIP" -eq 0 ]; then
+		LAST_START_MS="$START_MS"
+		echo "DEBUG: write chapter $CHAP_INDEX at $START_MS ms" >&2
+		echo "[CHAPTER]" >> "$CHAP_META"
+		echo "TIMEBASE=1/1000" >> "$CHAP_META"
+		echo "START=$START_MS" >> "$CHAP_META"
+		echo "title=Chapter $CHAP_INDEX" >> "$CHAP_META"
+		CHAP_INDEX=$((CHAP_INDEX+1))
+	    fi
+
+	    while read -r cline; do
+		if [[ "$cline" =~ ^CHAPTER[0-9]+=([0-9:.]+)$ ]]; then
+		    CSEC=$(hms_to_sec "${BASH_REMATCH[1]}")
+
+		    if (( $(echo "$CSEC >= $STARTSEC && $CSEC < $ENDSEC" | bc -l) )); then
+			OUTSEC=$(bc_calc "$OUT_OFFSET + ($CSEC - $STARTSEC)")
+			START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
+			if [ "$START_MS" -le "$LAST_START_MS" ]; then
+			    SKIP=1
+			else
+			    SKIP=0
+			fi
+			if [ "$SKIP" -eq 0 ]; then
+			    LAST_START_MS="$START_MS"
+			    echo "DEBUG: write chapter $CHAP_INDEX at $START_MS ms" >&2
+			    echo "[CHAPTER]" >> "$CHAP_META"
+			    echo "TIMEBASE=1/1000" >> "$CHAP_META"
+			    echo "START=$START_MS" >> "$CHAP_META"
+			    echo "title=Chapter $CHAP_INDEX" >> "$CHAP_META"
+			    CHAP_INDEX=$((CHAP_INDEX+1))
+			fi
+		    fi
+		fi
+	    done < "$CHAPFILE"
+
+	    
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
@@ -155,7 +217,10 @@ trim() {
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
             line=${line#*"Trim("}
+
+	    OUT_OFFSET=$(bc_calc "$OUT_OFFSET + $DURATION")
         done
+
     done < "$TRIMFILE"
 
     title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
@@ -175,11 +240,12 @@ trim() {
     fi
 
     ffmpeg -hide_banner -loglevel error -y \
-        -f concat -safe 0 -i "$PARTS_LIST" \
-        -c copy -map 0 \
-        -map_metadata -1 \
-        "${METADATA_OPT[@]}" \
-        "$OUTPUT"
+           -f concat -safe 0 -i "$PARTS_LIST" \
+	   -i "$CHAP_META" \
+           -c copy -map 0 \
+           -map_metadata -1 \
+           "${METADATA_OPT[@]}" \
+           "$OUTPUT"
 
     rm -rf "$TEMPDIR"
     echo "Done: $OUTPUT"
@@ -297,7 +363,8 @@ EOF
 	    if [ -s "$FILENAME.mp4" ]; then	    
 		if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
 		    jls "$FILENAME.mp4" jls_out.txt
-		    trim "$FILENAME.mp4" jls_out.txt temp$$.mp4
+#		    trim "$FILENAME.mp4" jls_out.txt temp$$.mp4
+		    trim "$FILENAME.mp4" temp$$.mp4
 		    if [ -s temp$$.mp4 ]; then
 			rm "$FILENAME.mp4"
 			mv temp$$.mp4 "$FILENAME.mp4"
