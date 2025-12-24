@@ -3,7 +3,7 @@ IFS=$'\n\t'
 
 #ffmpeg のオプション
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset medium -threads 10)
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset medium )
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -135,14 +135,21 @@ trim() {
         done
     fi
 
-    CHAP_META="$TEMPDIR/chapters.ffmeta"
+    # chap_out.txt から SCPos のみを抽出（昇順）
+    mapfile -t SC_FRAMES < <(
+	grep -o 'SCPos:[0-9]\+' "$CHAPFILE" | sed 's/SCPos://' | sort -n
+    )
+    
+#    CHAP_META="$TEMPDIR/chapters.ffmeta"
+    CHAP_META="chapters.ffmeta"
     echo ";FFMETADATA1" > "$CHAP_META"
     OUT_OFFSET=0
-    CHAP_INDEX=1
+    CHAP_INDEX=0
     LAST_START_MS=-1
-    
+    THRESHOLD_MS=3000   # 
+
     while read -r line; do
-        while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
+	while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
             STARTF="${BASH_REMATCH[1]}"
             ENDF="${BASH_REMATCH[2]}"
 
@@ -150,50 +157,52 @@ trim() {
             ENDSEC=$(bc_calc "$ENDF / $FPS")
             DURATION=$(bc_calc "$ENDSEC - $STARTSEC")
 
-	    TRIM_LEN="$DURATION"
+            # --- Trim開始チャプター ---
+            OUTSEC="$OUT_OFFSET"
+            START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
 
-	    START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
-	    if [ "$START_MS" -le "$LAST_START_MS" ]; then
-		SKIP=1
-	    else
-		SKIP=0
-	    fi
-	    if [ "$SKIP" -eq 0 ]; then
-		LAST_START_MS="$START_MS"
-		echo "DEBUG: write chapter $CHAP_INDEX at $START_MS ms" >&2
-		echo "[CHAPTER]" >> "$CHAP_META"
-		echo "TIMEBASE=1/1000" >> "$CHAP_META"
-		echo "START=$START_MS" >> "$CHAP_META"
-		echo "title=Chapter $CHAP_INDEX" >> "$CHAP_META"
-		CHAP_INDEX=$((CHAP_INDEX+1))
-	    fi
+            CHAP_INDEX=$((CHAP_INDEX+1))
+            {
+		echo "[CHAPTER]"
+		echo "TIMEBASE=1/1000"
+		echo "START=$START_MS"
+		echo "title=Chapter $CHAP_INDEX"
+            } >> "$CHAP_META"
 
-	    while read -r cline; do
-		if [[ "$cline" =~ ^CHAPTER[0-9]+=([0-9:.]+)$ ]]; then
-		    CSEC=$(hms_to_sec "${BASH_REMATCH[1]}")
+            LAST_START_MS="$START_MS"
 
-		    if (( $(echo "$CSEC >= $STARTSEC && $CSEC < $ENDSEC" | bc -l) )); then
-			OUTSEC=$(bc_calc "$OUT_OFFSET + ($CSEC - $STARTSEC)")
-			START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
-			if [ "$START_MS" -le "$LAST_START_MS" ]; then
-			    SKIP=1
-			else
-			    SKIP=0
-			fi
-			if [ "$SKIP" -eq 0 ]; then
-			    LAST_START_MS="$START_MS"
-			    echo "DEBUG: write chapter $CHAP_INDEX at $START_MS ms" >&2
-			    echo "[CHAPTER]" >> "$CHAP_META"
-			    echo "TIMEBASE=1/1000" >> "$CHAP_META"
-			    echo "START=$START_MS" >> "$CHAP_META"
-			    echo "title=Chapter $CHAP_INDEX" >> "$CHAP_META"
-			    CHAP_INDEX=$((CHAP_INDEX+1))
-			fi
-		    fi
+            # --- SCPos によるチャプター ---
+            for SCF in "${SC_FRAMES[@]}"; do
+		# Trim区間外は無視
+		if (( SCF < STARTF || SCF >= ENDF )); then
+                    continue
 		fi
-	    done < "$CHAPFILE"
 
-	    
+		OUTSEC=$(bc_calc "$OUT_OFFSET + ($SCF - $STARTF) / $FPS")
+		START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
+
+		DIFF=$((START_MS - LAST_START_MS))
+		[ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+
+		# 近すぎるチャプターは抑止
+		if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
+                    continue
+		fi
+
+		CHAP_INDEX=$((CHAP_INDEX+1))
+		{
+                    echo "[CHAPTER]"
+                    echo "TIMEBASE=1/1000"
+                    echo "START=$START_MS"
+                    echo "title=Chapter $CHAP_INDEX"
+		} >> "$CHAP_META"
+
+		LAST_START_MS="$START_MS"
+            done
+
+            # --- 出力時間を進める ---
+            OUT_OFFSET=$(bc_calc "$OUT_OFFSET + $DURATION")
+
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
@@ -216,11 +225,9 @@ trim() {
 
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
+	    
             line=${line#*"Trim("}
-
-	    OUT_OFFSET=$(bc_calc "$OUT_OFFSET + $DURATION")
-        done
-
+	done
     done < "$TRIMFILE"
 
     title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
