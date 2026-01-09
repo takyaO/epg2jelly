@@ -88,8 +88,8 @@ extractProgram() {
     )
 
     # 先頭文字列削除
-    FILENAME=$(echo "$input_file"  | sed -e 's/[\/:*?"<>|]//g'  | sed -e 's/^【[^】]*】//' \
-                                     -e 's/^プチプチ・アニメ[[:space:]]*//' \
+    FILENAME=$(echo "$input_file"  | sed -e 's/[\/:*?"<>|]//g'  | sed -e 's/^【[^】]*】//' -e 's/^\[[^]*]\]//' \
+				     -e 's/^プチプチ・アニメ[[:space:]]*//' \
                                      -e 's/^アニメ[[:space:]]*//' \
                                      -e 's/^ミニアニメ[[:space:]]*//' \
                                      -e 's/^限界アニメ[[:space:]]*//' \
@@ -161,7 +161,7 @@ extractProgram() {
     fi
 
     # 番組名抽出処理
-    ORIGINAL=$(echo "$PROGRAM" | sed -e 's/^\[[^]]\]//' -e 's/^\[[^]]\]//' -e 's/\[.*//'  ) # [字] 削除
+    ORIGINAL=$(echo "$PROGRAM" | sed  -e 's/\[.*//'  ) # [字] 削除
 
     # ヒューリスティックな抽出（grep -E と sed -E で統一）
     if echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
@@ -253,4 +253,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2025/12/13
+#Time stamp: 2026/01/09
