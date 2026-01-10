@@ -95,7 +95,7 @@ extractProgram() {
                                      -e 's/^限界アニメ[[:space:]]*//' \
                                      -e 's/^ＴＶアニメ[[:space:]]*//' \
                                      -e 's/^ドラマブレイク[[:space:]]*//' \
-                                     -e 's/^ドラマ[[:space:]]*//' \
+                                     -e 's/^ドラマ２４[[:space:]]*//' \
                                      -e 's/^.*曜ミステリー[[:space:]]*//' \
                                      -e 's/^サスペンス[[:space:]]*//' \
                                      -e 's/^＜[^＞]*＞[[:space:]]*//' \
@@ -114,6 +114,7 @@ extractProgram() {
                                      -e 's/^午後ロー[[:space:]]*//' \
                                      -e 's/^金曜ロードショー[[:space:]]*//' \
                                      -e 's/^土曜プレミアム・映画[[:space:]]*//' \
+                                     -e 's/^ドラマ[[:space:]]*//' \
                                      -e 's/^.*曜劇場[[:space:]]*//')
     
     found_delimiter=""
@@ -254,4 +255,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/01/09
+#Time stamp: 2026/01/10
