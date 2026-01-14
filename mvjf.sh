@@ -108,6 +108,7 @@ extractProgram() {
                                      -e 's/^時代劇[[:space:]]*//' \
                                      -e 's/^.*曜ドラマ[[:space:]]*//' \
                                      -e 's/^ドラマ２４[[:space:]]*//' \
+                                     -e 's/^ドラマストリーム[[:space:]]*//' \
                                      -e 's/^日５[[:space:]]*//' \
                                      -e 's/^映画[[:space:]]*//' \
                                      -e 's/^映画の時間[[:space:]]*//' \
@@ -256,4 +257,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/01/11
+#Time stamp: 2026/01/14
