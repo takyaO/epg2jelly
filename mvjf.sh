@@ -108,6 +108,7 @@ extractProgram() {
                                      -e 's/^時代劇[[:space:]]*//' \
                                      -e 's/^.*曜ドラマ[[:space:]]*//' \
                                      -e 's/^ドラマ２４[[:space:]]*//' \
+                                     -e 's/^ドラマ９[[:space:]]*//' \
                                      -e 's/^ドラマストリーム[[:space:]]*//' \
                                      -e 's/^日５[[:space:]]*//' \
                                      -e 's/^映画[[:space:]]*//' \
@@ -207,8 +208,7 @@ extractProgram() {
     echo "$PROGRAM"
 }
 
-
-PROGRAM=$(extractProgram "$input_file")
+PROGRAM=$(extractProgram "$(basename "$input_file")")
 
 # リストファイルから既存のフォルダ名を検索（上から順に）
 matched_folder="$PROGRAM"
@@ -257,4 +257,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/01/14
+#Time stamp: 2026/01/17
