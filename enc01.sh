@@ -2,7 +2,7 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset medium -threads 10)
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -threads 10)
 FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
 # libfdk_aacの利用可否をチェック
@@ -246,6 +246,18 @@ trim() {
         METADATA_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
     fi
 
+    # 音声言語取得
+    AUDIO_LANG=$(ffprobe -v error \
+			 -select_streams a:0 \
+			 -show_entries stream_tags=language \
+			 -of default=nw=1:nk=1 "$INPUT")
+
+    # フォールバック
+    [[ -z "$AUDIO_LANG" ]] && AUDIO_LANG=jpn
+
+    METADATA_OPT+=(-metadata:s:a:0 language="$AUDIO_LANG")
+    METADATA_OPT+=(-disposition:a:0 default)
+    
     ffmpeg -hide_banner -loglevel error -y \
            -f concat -safe 0 -i "$PARTS_LIST" \
 	   -i "$CHAP_META" \
