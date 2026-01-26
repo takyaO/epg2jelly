@@ -2,8 +2,9 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
+FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 10 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -threads 10)
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+#FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -87,7 +88,6 @@ trim() {
         return 1
     fi
     local INPUT="$1"
-#    local TRIMFILE="$2"
     local OUTPUT="$2"
     local TRIMFILE="jls_out.txt"
     local CHAPFILE="chap_out.txt"    
@@ -137,10 +137,13 @@ trim() {
 
     # chap_out.txt から SCPos のみを抽出（昇順）
     mapfile -t SC_FRAMES < <(
-	grep -o 'SCPos:[0-9]\+' "$CHAPFILE" | sed 's/SCPos://' | sort -n
+	grep 'SCPos:' "$CHAPFILE" \
+	    | grep -v '^[[:space:]]*#' \
+	    | grep -o 'SCPos:[0-9]\+' \
+	    | sed 's/SCPos://' \
+	    | sort -n
     )
     
-#    CHAP_META="$TEMPDIR/chapters.ffmeta"
     CHAP_META="chapters.ffmeta"
     echo ";FFMETADATA1" > "$CHAP_META"
     OUT_OFFSET=0
@@ -360,6 +363,109 @@ EOF
     echo "Successfully created: $output_file"
 }
 
+chapter() {
+    if [ "$#" -ne 2 ]; then
+        echo "Error: chapter expects 2 arguments: INPUT OUTPUT" >&2
+        return 1
+    fi
+
+    local INPUT="$1"
+    local OUTPUT="$2"
+    local CHAPFILE="chap_out.txt"
+    local FPS=29.97
+
+    # 入力ファイルの存在チェック
+    if [[ ! -f "$INPUT" ]]; then
+        echo "Error: Input file '$INPUT' not found" >&2
+        return 1
+    fi
+
+    # コマンドの存在チェック
+    local required_commands=("chapter_exe")
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            echo "Error: Required command '$cmd' not found in PATH" >&2
+            return 1
+        fi
+    done
+
+    local avs_file="join.avs"
+    
+    # avsファイルの作成
+    cat > "$avs_file" << EOF
+TSFilePath="$INPUT"
+LWLibavVideoSource(TSFilePath, repeat=true, dominance=1)
+AudioDub(last,LWLibavAudioSource(TSFilePath, av_sync=true))
+EOF
+    
+    # chapter_exeの実行（タイムアウト付き）
+    timeout -k 60 1800 chapter_exe -v "$avs_file" -o $CHAPFILE || {
+        echo "chapter_exe failed or timed out" >&2
+        return 1
+    }
+    
+    CHAP_META="chapters.ffmeta"
+    echo ";FFMETADATA1" > "$CHAP_META"
+
+    CHAP_INDEX=0
+    LAST_START_MS=-100000
+    THRESHOLD_MS=3000   # 3秒以内の重複防止
+
+    # SCPos 抽出して昇順
+    mapfile -t SC_FRAMES < <(
+	grep 'SCPos:' "$CHAPFILE" \
+	    | grep -v '^[[:space:]]*#' \
+	    | grep -o 'SCPos:[0-9]\+' \
+	    | sed 's/SCPos://' \
+	    | sort -n
+    )
+
+    for SCF in "${SC_FRAMES[@]}"; do
+        SEC=$(bc_calc "$SCF / $FPS")
+        START_MS=$(printf "%.0f" "$(bc_calc "$SEC * 1000")")
+
+        DIFF=$((START_MS - LAST_START_MS))
+        [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+
+        # 近すぎるチャプターは無視
+        if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
+            continue
+        fi
+
+        CHAP_INDEX=$((CHAP_INDEX+1))
+        {
+            echo "[CHAPTER]"
+            echo "TIMEBASE=1/1000"
+            echo "START=$START_MS"
+            echo "title=Chapter $CHAP_INDEX"
+        } >> "$CHAP_META"
+
+        LAST_START_MS=$START_MS
+    done
+
+    # チャプターが1つも生成されなかった場合
+    if [ "$CHAP_INDEX" -eq 0 ]; then
+        echo "No valid chapter points found. Copying input to output..."
+        ffmpeg -hide_banner -loglevel error -y \
+            -i "$INPUT" -map 0 -c copy "$OUTPUT"
+        rm -f "$CHAP_META"
+        return 0
+    fi
+
+    echo "Writing $CHAP_INDEX chapters into MP4..."
+
+    ffmpeg -hide_banner -loglevel error -y \
+        -i "$INPUT" \
+        -i "$CHAP_META" \
+        -map 0 -c copy \
+        -map_chapters 1 \
+        "$OUTPUT"
+
+    rm -f "$CHAP_META"
+    echo "Done: $OUTPUT"
+}
+
+
 # --- メイン処理 ---
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
     cd "$SOURCEDIR"
@@ -382,7 +488,6 @@ EOF
 	    if [ -s "$FILENAME.mp4" ]; then	    
 		if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
 		    jls "$FILENAME.mp4" jls_out.txt
-#		    trim "$FILENAME.mp4" jls_out.txt temp$$.mp4
 		    trim "$FILENAME.mp4" temp$$.mp4
 		    if [ -s temp$$.mp4 ]; then
 			rm "$FILENAME.mp4"
@@ -392,6 +497,19 @@ EOF
 			notify 3 "ERROR: trim failed: $FILENAME"
 		    fi
 		    rm "$FILENAME.mp4.lwi"
+		else
+		    chapter "$FILENAME.mp4" temp$$.mp4
+		    if [ $? -eq 0 ] && [ -s "temp$$.mp4" ] && [ "$(stat -c%s "temp$$.mp4")" -gt "$(stat -c%s "$FILENAME.mp4")" ]; then
+			rm "$FILENAME.mp4"
+			mv temp$$.mp4 "$FILENAME.mp4"
+		    else
+			if [ -e "temp$$.mp4" ]; then
+			    rm -f "temp$$.mp4"
+			fi
+		    fi
+		    if [ -e "$FILENAME.mp4.lwi" ]; then
+			rm "$FILENAME.mp4.lwi"
+		    fi
 		fi
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
 		notify 2 "mp4 created: $FILENAME"

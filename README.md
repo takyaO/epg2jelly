@@ -17,6 +17,22 @@ Helps integrate the TV recording management server, EPGStation, with media serve
    
 　　sudo apt install ffmpeg curl jq bc python3-pip
 
+3. チャプター生成（任意）
+
+git clone --depth 1 --recursive https://github.com/tobitti0/JoinLogoScpTrialSetLinux.git
+cd JoinLogoScpTrialSetLinux/modules/chapter_exe/src/
+cp mvec.cpp mvec.cpp.bak
+sed -i 's/_mm_load_si128/_mm_loadu_si128/g' mvec.cpp
+sed -i 's/(__m128i\*)p1 \+  0/(__m128i*)(p1 + 0)/g' mvec.cpp
+sed -i 's/(__m128i\*)p2 \+  0/(__m128i*)(p2 + 0)/g' mvec.cpp
+cp Makefile Makefile.bak
+sed -i -e 's/^CC = gcc/CC = g++/' -e 's/-std=gnu99/-std=gnu++11/' -e 's/-fno-tree-vectorize//g' -e 's/CFLAGS = -O3/CFLAGS = -O3 -msse2/' Makefile
+diff -u Makefile.bak Makefile
+make
+sudo cp chapter_exe /usr/local/bin/
+
+CMカットには、さらにlogoframe, join_logo_scpほかが必要
+
 ## インストール手順
 
 1. 設定 docker-mirakurun-epgstation/epgstation/config/config.ymlのrecordedFormat を '%TITLE%' が先頭になるように変更
