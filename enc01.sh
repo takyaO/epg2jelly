@@ -2,9 +2,9 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 10 )
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 10 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -threads 10)
-#FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then

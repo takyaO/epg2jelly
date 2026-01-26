@@ -19,6 +19,7 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 3. チャプター生成（任意）
 
+```
 git clone --depth 1 --recursive https://github.com/tobitti0/JoinLogoScpTrialSetLinux.git
 cd JoinLogoScpTrialSetLinux/modules/chapter_exe/src/
 cp mvec.cpp mvec.cpp.bak
@@ -30,6 +31,7 @@ sed -i -e 's/^CC = gcc/CC = g++/' -e 's/-std=gnu99/-std=gnu++11/' -e 's/-fno-tre
 diff -u Makefile.bak Makefile
 make
 sudo cp chapter_exe /usr/local/bin/
+```
 
 CMカットには、さらにlogoframe, join_logo_scpほかが必要
 
