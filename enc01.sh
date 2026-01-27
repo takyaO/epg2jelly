@@ -149,7 +149,7 @@ trim() {
     OUT_OFFSET=0
     CHAP_INDEX=0
     LAST_START_MS=-1
-    THRESHOLD_MS=3000   # 
+    THRESHOLD_MS=15000   # 
 
     while read -r line; do
 	while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
@@ -409,7 +409,7 @@ EOF
 
     CHAP_INDEX=0
     LAST_START_MS=-100000
-    THRESHOLD_MS=3000   # 3秒以内の重複防止
+    THRESHOLD_MS=15000   # 重複防止15秒
 
     # SCPos 抽出して昇順
     mapfile -t SC_FRAMES < <(
@@ -488,15 +488,22 @@ EOF
 	    if [ -s "$FILENAME.mp4" ]; then	    
 		if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
 		    jls "$FILENAME.mp4" jls_out.txt
-		    trim "$FILENAME.mp4" temp$$.mp4
-		    if [ -s temp$$.mp4 ]; then
-			rm "$FILENAME.mp4"
-			mv temp$$.mp4 "$FILENAME.mp4"
+		    if [ $? -eq 0 ]; then
+			trim "$FILENAME.mp4" temp$$.mp4
+			if [ -s "temp$$.mp4" ]; then
+			    rm "$FILENAME.mp4"
+			    mv temp$$.mp4 "$FILENAME.mp4"
+			else
+			    echo "Error: trim failed" >&2
+			    notify 3 "ERROR: trim failed: $FILENAME"
+			fi
 		    else
-			echo "Error: trim failed" >&2
-			notify 3 "ERROR: trim failed: $FILENAME"
+			echo "Error: jls failed" >&2
+			notify 3 "ERROR: jls failed: $FILENAME"
 		    fi
-		    rm "$FILENAME.mp4.lwi"
+		    if [ -e "$FILENAME.mp4.lwi" ]; then
+			rm "$FILENAME.mp4.lwi"
+		    fi
 		else
 		    chapter "$FILENAME.mp4" temp$$.mp4
 		    if [ $? -eq 0 ] && [ -s "temp$$.mp4" ] && [ "$(stat -c%s "temp$$.mp4")" -gt "$(stat -c%s "$FILENAME.mp4")" ]; then
