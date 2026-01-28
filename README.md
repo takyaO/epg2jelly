@@ -101,7 +101,7 @@ TVerとか、youtubeとか
 
 [第16回：ハードウェアアクセラレーション](https://note.com/leal_walrus5520/n/n0769ac49efaa)
 
-動画処理効率化
+Jellyfinおすすめ設定
 
 [第17回：スマートテレビ](https://note.com/leal_walrus5520/n/nf497415924f0)
 
