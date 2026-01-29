@@ -149,7 +149,7 @@ trim() {
     OUT_OFFSET=0
     CHAP_INDEX=0
     LAST_START_MS=-1
-    THRESHOLD_MS=15000   # 
+    THRESHOLD_MS=20000   # 
 
     while read -r line; do
 	while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
@@ -373,98 +373,89 @@ chapter() {
     local OUTPUT="$2"
     local CHAPFILE="chap_out.txt"
     local FPS=29.97
+    local CHAP_META="chapters.ffmeta"
 
-    # 入力ファイルの存在チェック
-    if [[ ! -f "$INPUT" ]]; then
-        echo "Error: Input file '$INPUT' not found" >&2
-        return 1
-    fi
+    [[ ! -f "$INPUT" ]] && { echo "Input not found" >&2; return 1; }
+    command -v chapter_exe >/dev/null || { echo "chapter_exe not found" >&2; return 1; }
 
-    # コマンドの存在チェック
-    local required_commands=("chapter_exe")
-    for cmd in "${required_commands[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            echo "Error: Required command '$cmd' not found in PATH" >&2
-            return 1
-        fi
-    done
-
+    # ---- 1. Avisynthファイル作成と解析 ----
     local avs_file="join.avs"
-    
-    # avsファイルの作成
     cat > "$avs_file" << EOF
 TSFilePath="$INPUT"
 LWLibavVideoSource(TSFilePath, repeat=true, dominance=1)
 AudioDub(last,LWLibavAudioSource(TSFilePath, av_sync=true))
 EOF
-    
-    # chapter_exeの実行（タイムアウト付き）
-    timeout -k 60 1800 chapter_exe -v "$avs_file" -o $CHAPFILE || {
-        echo "chapter_exe failed or timed out" >&2
+
+    timeout -k 60 1800 chapter_exe -v "$avs_file" -o "$CHAPFILE" || {
+        echo "chapter_exe failed" >&2
         return 1
     }
-    
-    CHAP_META="chapters.ffmeta"
-    echo ";FFMETADATA1" > "$CHAP_META"
 
-    CHAP_INDEX=0
-    LAST_START_MS=-100000
-    THRESHOLD_MS=15000   # 重複防止15秒
+    # ---- 2. 動画長とフレーム情報の取得 ----
+    # DUR_MS を確実に取得
+    DUR_MS=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$INPUT" | awk '{printf "%.0f", $1*1000}')
+    MAX_FRAME=$(printf "%.0f" "$(echo "$DUR_MS / 1000 * $FPS" | bc -l)")
 
-    # SCPos 抽出して昇順
-    mapfile -t SC_FRAMES < <(
-	grep 'SCPos:' "$CHAPFILE" \
-	    | grep -v '^[[:space:]]*#' \
-	    | grep -o 'SCPos:[0-9]\+' \
-	    | sed 's/SCPos://' \
-	    | sort -n
-    )
+    # シーンチェンジフレームを取得してミリ秒に変換
+    local -a TIME_POINTS=(0) # 0秒を初期値として追加
+    local THRESHOLD_MS=3000 
 
-    for SCF in "${SC_FRAMES[@]}"; do
-        SEC=$(bc_calc "$SCF / $FPS")
-        START_MS=$(printf "%.0f" "$(bc_calc "$SEC * 1000")")
-
-        DIFF=$((START_MS - LAST_START_MS))
-        [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
-
-        # 近すぎるチャプターは無視
-        if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
-            continue
+    while read -r SCF; do
+        (( SCF >= MAX_FRAME )) && continue
+        
+        # ミリ秒変換
+        local MS=$(printf "%.0f" "$(echo "($SCF / $FPS) * 1000" | bc -l)")
+        
+        # 前のポイントとの間隔チェック
+        local LAST_MS=${TIME_POINTS[-1]}
+        if (( MS - LAST_MS > THRESHOLD_MS )); then
+            TIME_POINTS+=("$MS")
         fi
+    done < <(grep -Eo 'SCPos:[0-9]+' "$CHAPFILE" | sed 's/SCPos://' | sort -n)
 
-        CHAP_INDEX=$((CHAP_INDEX+1))
-        {
-            echo "[CHAPTER]"
-            echo "TIMEBASE=1/1000"
-            echo "START=$START_MS"
-            echo "title=Chapter $CHAP_INDEX"
-        } >> "$CHAP_META"
+    # 最後に動画の終端を追加
+    TIME_POINTS+=("$DUR_MS")
 
-        LAST_START_MS=$START_MS
-    done
-
-    # チャプターが1つも生成されなかった場合
-    if [ "$CHAP_INDEX" -eq 0 ]; then
-        echo "No valid chapter points found. Copying input to output..."
-        ffmpeg -hide_banner -loglevel error -y \
-            -i "$INPUT" -map 0 -c copy "$OUTPUT"
-        rm -f "$CHAP_META"
+    # ---- 3. FFMETADATA作成 ----
+    echo ";FFMETADATA1" > "$CHAP_META"
+    
+    local NUM_CHAPS=$((${#TIME_POINTS[@]} - 1))
+    
+    if (( NUM_CHAPS <= 0 )); then
+        echo "No valid chapter points found. Copying input..."
+        ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -map 0 -c copy "$OUTPUT"
         return 0
     fi
 
-    echo "Writing $CHAP_INDEX chapters into MP4..."
+    for ((i=0; i<NUM_CHAPS; i++)); do
+        local START=${TIME_POINTS[$i]}
+        local END=${TIME_POINTS[$((i+1))]}
+        {
+            echo "[CHAPTER]"
+            echo "TIMEBASE=1/1000"
+            echo "START=$START"
+            echo "END=$END"
+            echo "title=Chapter $((i+1))"
+        } >> "$CHAP_META"
+    done
 
+    # ---- 4. 動画への書き込み ----
+    echo "Writing $NUM_CHAPS chapters..."
+
+    # -map_metadata 0 は元のタグを引き継ぎ、-map_chapters 1 で上書きする構成
     ffmpeg -hide_banner -loglevel error -y \
         -i "$INPUT" \
         -i "$CHAP_META" \
-        -map 0 -c copy \
+        -map 0 \
+        -map_metadata 0 \
         -map_chapters 1 \
+        -c copy \
         "$OUTPUT"
 
-    rm -f "$CHAP_META"
     echo "Done: $OUTPUT"
+    # 一時ファイルのクリーンアップ（必要に応じて）
+    # rm "$avs_file" "$CHAPFILE" "$CHAP_META"
 }
-
 
 # --- メイン処理 ---
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
