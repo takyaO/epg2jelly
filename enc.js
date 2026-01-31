@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+const FORCE_CODEC = 'h264_qsv'; // 手動で固定したい場合はここに書く（例: 'h264_vaapi'）
+                                 // 自動判定に戻したいときは null にする
+
 // モジュールの読み込み
 const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
@@ -268,29 +271,30 @@ function getAudioCodec() {
     return audioCodec;
 }
 
-// 利用可能なビデオコーデックを決定
 function getVideoCodec() {
-    let useCodec = 'libx264'; // デフォルトをlibx264に設定
-    
-    // まずh264_qsvをチェック
+    // 1. まず手動設定（FORCE_CODEC）があるか確認
+    if (FORCE_CODEC) {
+        console.log(`Manual override: Using ${FORCE_CODEC}`);
+        return FORCE_CODEC;
+    }
+
+    // 2. QSVのチェック
     const hasH264Qsv = checkH264QsvAvailability();
     if (hasH264Qsv) {
-        useCodec = 'h264_qsv';
         console.log('Using h264_qsv video codec');
-        return useCodec;
+        return 'h264_qsv'; 
     }
-    
-    // h264_qsvが使えない場合、h264_vaapiをチェック
+
+    // 3. VA-APIのチェック
     const hasH264Vaapi = checkH264VaapiAvailability();
     if (hasH264Vaapi) {
-        useCodec = 'h264_vaapi';
         console.log('Using h264_vaapi video codec');
-        return useCodec;
+        return 'h264_vaapi';
     }
-    
-    // どちらも使えない場合はlibx264にfallback
-    console.log('h264_qsv and h264_vaapi not available, falling back to libx264');
-    return useCodec;
+
+    // 4. Fallback
+    console.log('Hardware codecs not available/not forced, using libx264');
+    return 'libx264';
 }
 
 function checkH264QsvAvailability() {
@@ -865,7 +869,6 @@ function generateSplitOutputs() {
         debugAllStreams();
     }
     
-    // ビデオコーデックを動的に決定
     const useCodec = getVideoCodec();
     console.log(`Final video codec selection: ${useCodec}`);
     
@@ -875,8 +878,16 @@ function generateSplitOutputs() {
     if (useCodec === 'h264_qsv') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
-        useCodecPostArgs.push('-preset', 'slow');
-        useCodecPostArgs.push('-global_quality', '20');
+        useCodecPostArgs.push('-r', '30000/1001'); 
+        useCodecPostArgs.push('-aspect', '16:9'); 
+        useCodecPostArgs.push('-preset', 'veryslow');
+        useCodecPostArgs.push('-global_quality', '21');
+        useCodecPostArgs.push('-profile:v', 'high');
+        useCodecPostArgs.push('-level', '4.2');
+//        useCodecPostArgs.push('-look_ahead', '1');
+        useCodecPostArgs.push('-extbrc', '1');
+        useCodecPostArgs.push('-b_strategy', '1');
+//        useCodecPostArgs.push('-threads', '10');
     } else if (useCodec === 'libx264') {
         useCodecPreArgs.push('-fflags', '+genpts'); 
         useCodecPostArgs.push('-vf', 'yadif');
@@ -1038,4 +1049,4 @@ function generateSplitOutputs() {
 })();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2025/12/02
+// Time stamp: 2026/01/31
