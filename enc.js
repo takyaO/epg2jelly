@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（例: 'h264_vaapi'）
+const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（ h264_qsv, h264_vaapi, libx264 から選択）
                                  // 自動判定に戻したいときは null にする
 
 // モジュールの読み込み

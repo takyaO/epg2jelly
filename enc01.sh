@@ -126,7 +126,7 @@ trim() {
     fi
 
     if [[ "$HAS_SUBS" == "yes" ]]; then
-        CODEC_OPT+=(-c:s copy)
+        CODEC_OPT+=(-c:s mov_text)
     fi
 
     if [[ "$AUDIO_COUNT" -gt 0 ]]; then
@@ -398,7 +398,7 @@ EOF
 
     # シーンチェンジフレームを取得してミリ秒に変換
     local -a TIME_POINTS=(0) # 0秒を初期値として追加
-    local THRESHOLD_MS=3000 
+    local THRESHOLD_MS=20000 
 
     while read -r SCF; do
         (( SCF >= MAX_FRAME )) && continue
