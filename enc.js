@@ -355,8 +355,8 @@ function checkH264VaapiAvailability() {
     try {
         // エンコーダーリストを確認
         const encodersOptions = ['-encoders'];
-        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
-        const hasH264Vaapi = encodersResult.includes('h264_vaapi') && encodersResult.includes('H.264');
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' }); 
+       const hasH264Vaapi = encodersResult.includes('h264_vaapi') && encodersResult.includes('H.264');
 
         console.log(`h264_vaapi detection - Encoders: ${hasH264Vaapi}`);
 
@@ -894,13 +894,29 @@ function generateSplitOutputs() {
         useCodecPostArgs.push('-preset', 'slow');
         useCodecPostArgs.push('-crf', '23');
     } else if (useCodec === 'h264_vaapi') {
-        useCodecPreArgs.push('-hwaccel', 'vaapi');
-        useCodecPreArgs.push('-hwaccel_device', '/dev/dri/renderD128');
-        useCodecPostArgs.push('-vf', 'format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=1280:h=720');
-        useCodecPostArgs.push('-compression_level', '1');
-        useCodecPostArgs.push('-global_quality', '20');
+	useCodecPreArgs.push('-hwaccel', 'vaapi');
+	useCodecPreArgs.push('-hwaccel_device', '/dev/dri/renderD128');
+//deinterlace option 1
+	useCodecPreArgs.push('-hwaccel_output_format', 'vaapi'); // これによりVRAM直結になる
+	useCodecPostArgs.push('-vf', 'deinterlace_vaapi,scale_vaapi=w=1280:h=720');
+//option 2
+//        useCodecPostArgs.push('-vf', 'format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=1280:h=720');	
+//option 3
+//	useCodecPostArgs.push('-vf', 'yadif,format=nv12,hwupload,scale_vaapi=1280:720'); //遅すぎる
+//
+	useCodecPostArgs.push('-r', '30000/1001');
+	useCodecPostArgs.push('-aspect', '16:9');
+	// 画質設定：yadifの精度を活かすために ICQ モードを使用
+	useCodecPostArgs.push('-rc_mode', 'ICQ'); 
+	useCodecPostArgs.push('-global_quality', '20'); // x264のCRF23相当なら20〜21あたりが目安
+	useCodecPostArgs.push('-profile:v', 'high');
+	useCodecPostArgs.push('-level', '4.2');
+	useCodecPostArgs.push('-compression_level', '1'); // 最高圧縮設定
     }
 
+
+
+    
     // 音声コーデックを決定
     const audioCodec = getAudioCodec();
     
@@ -1049,4 +1065,4 @@ function generateSplitOutputs() {
 })();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/01/31
+// Time stamp: 2026/02/01
