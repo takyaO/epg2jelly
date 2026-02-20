@@ -3,7 +3,7 @@ IFS=$'\n\t'
 
 #ffmpeg のオプション
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 10 )
-#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -threads 10)
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset fast -threads 10)
 FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
 # libfdk_aacの利用可否をチェック
@@ -209,22 +209,35 @@ trim() {
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
-            if (( $(echo "$STARTSEC >= 5" | bc -l) )); then
-                START_BEFORE=$(echo "$STARTSEC - 5" | bc -l | sed 's/^\./0./')
-                ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
-                       "${FFMPEG_OPTS[@]}" \
-                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-                       -map_metadata 0 \
-                       -avoid_negative_ts make_zero \
-                       "$PART"
-            else
-                ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
-                       "${FFMPEG_OPTS[@]}" \
-                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-                       -map_metadata 0 \
-                       -avoid_negative_ts make_zero \
-                       "$PART"
-            fi
+#字幕が2,3秒ずれる
+#            if (( $(echo "$STARTSEC >= 5" | bc -l) )); then
+#                START_BEFORE=$(echo "$STARTSEC - 5" | bc -l | sed 's/^\./0./')
+#                ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
+#                       "${FFMPEG_OPTS[@]}" \
+#                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+#                       -map_metadata 0 \
+#                       -avoid_negative_ts make_zero \
+#                       "$PART"
+#            else
+#                ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
+#                       "${FFMPEG_OPTS[@]}" \
+#                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
+#                       -map_metadata 0 \
+#                       -avoid_negative_ts make_zero \
+#                       "$PART"
+#            fi
+
+	    ffmpeg \
+		-ss "$STARTSEC" \
+		-i "$INPUT" \
+		-t "$DURATION" \
+		"${FFMPEG_OPTS[@]}" \
+		-map_metadata 0 \
+		-avoid_negative_ts make_zero \
+		-fflags +genpts \
+		"${CODEC_OPT[@]}" \
+		"${STREAM_OPT[@]}" \
+		"$PART"
 
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
