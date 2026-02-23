@@ -2,7 +2,7 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 10 )
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset fast -threads 10)
 FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 
@@ -306,7 +306,7 @@ jls() {
     local required_commands=("ffmpeg" "chapter_exe" "logoframe" "join_logo_scp")
     for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
-            echo "Error: Required command '$cmd' not found in PATH" >&2
+            echo "Error: Required command '$cmd' not found in PATH. See https://note.com/leal_walrus5520/n/n7181f4b46d5f" >&2
             return 1
         fi
     done
@@ -389,7 +389,7 @@ chapter() {
     local CHAP_META="chapters.ffmeta"
 
     [[ ! -f "$INPUT" ]] && { echo "Input not found" >&2; return 1; }
-    command -v chapter_exe >/dev/null || { echo "chapter_exe not found" >&2; return 1; }
+    command -v chapter_exe >/dev/null || { echo "chapter_exe not found. See https://note.com/leal_walrus5520/n/n7181f4b46d5f" >&2; return 1; }
 
     # ---- 1. Avisynthファイル作成と解析 ----
     local avs_file="join.avs"

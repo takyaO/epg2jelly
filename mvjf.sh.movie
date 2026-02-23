@@ -6,26 +6,41 @@
 #FILENAME= 映画「新・のび太の海底鬼岩城」公開直前‼「映画ドラえもんのび太の絵世界物語」
 #EPISODE= 映画ドラえもんのび太の絵世界物語
 
-# 入力ファイル名と出力ディレクトリを受け取る
+DRY_RUN=false
+while getopts ":n" opt; do
+    case ${opt} in
+        n )
+            DRY_RUN=true
+            ;;
+        \? )
+            echo "Invalid option: -$OPTARG"
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND -1))
+# 移動対象ファイル名と出力先ディレクトリを受け取る
 input_file="$1"
 outdir="$2"
 
-# 必要な引数が不足している場合のエラーハンドリング
-if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 <input_file> <output_directory>"
-  exit 1
-fi
-
-# ファイルが存在するかどうかチェック
-if [ ! -f "$input_file" ]; then
-  echo "指定されたファイルが存在しません: $input_file"
-  exit 1
-fi
-
-# 出力ディレクトリが存在するかどうかチェック
-if [ ! -d "$outdir" ]; then
-  echo "指定された出力ディレクトリが存在しません: $outdir"
-  exit 1
+# ドライランモードならチェックしない
+if [ "$DRY_RUN" = "false" ]; then
+    # 引数のチェック
+    if [ "$#" -ne 2 ]; then
+	echo "Usage: $0 [-n] <input_file> <output_directory>"
+	exit 1
+    fi
+    # ファイルが存在するか
+    if [ ! -f "$input_file" ]; then
+	echo "指定されたファイルが存在しません: $input_file"
+	exit 1
+    fi
+    # 出力ディレクトリが存在するか
+    if [ ! -d "$outdir" ]; then
+	echo "指定された出力ディレクトリが存在しません: $outdir"
+	exit 1
+    fi
 fi
 
 ## ファイル名からディレクトリとファイルパスを構築
@@ -51,20 +66,27 @@ if [ ${#valid[@]} -gt 0 ]; then
 fi
 
 # 結果を表示する
-echo "EPISODE: $EPISODE"
+#echo "EPISODE: $EPISODE"
 
 # 最終的なディレクトリパスを構築
 final_dir="$outdir/$EPISODE"
-# ディレクトリを作成（存在しない場合のみ）
-mkdir -p "$final_dir" || {
-  echo "ディレクトリの作成に失敗しました: $final_dir"
-  exit 1
-}
-# ファイルを移動
-mv "$input_file" "$final_dir" || {
-  echo "ファイルの移動に失敗しました: $input_file -> $final_dir"
-  exit 1
-}
-echo "ファイルが正常に移動されました: $final_dir/$(basename "$filename")"
 
+if [ "$DRY_RUN" = "true" ]; then
+   # ドライランモードの場合、移動操作を行わない
+   echo "Using folder name: $EPISODE"
+else
+    # ディレクトリを作成（存在しない場合のみ）
+    mkdir -p "$final_dir" || {
+	echo "ディレクトリの作成に失敗しました: $final_dir"
+	exit 1
+    }
+    # ファイルを移動
+    mv "$input_file" "$final_dir" || {
+	echo "ファイルの移動に失敗しました: $input_file -> $final_dir"
+	exit 1
+    }
+    echo "ファイルが正常に移動されました: mv '$input_file' '$final_dir' "
+fi
+
+#https://note.com/leal_walrus5520/n/nb685324a21cb
 #Time stamp: 2026/02/23
