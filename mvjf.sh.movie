@@ -46,27 +46,34 @@ fi
 ## ファイル名からディレクトリとファイルパスを構築
 FILENAME=$(basename "$input_file")
 
-# 宣伝キーワード
 AD_WORDS="公開|直前|記念|特別|放送|SP"
 
 valid=()
-while read -r block; do
-    full="${block}"
-    title=$(echo "$block" | sed -E 's/^[「『]//; s/[」』]$//')
-    # カッコ閉じ直後に宣伝語があるか判定
-    if echo "$FILENAME" | grep -P -q "\Q$full\E[[:space:]]*($AD_WORDS)"; then
-        # 宣伝扱い → スキップ
-        continue
-    fi
-    valid+=("$title")
-done < <(echo "$FILENAME" | grep -oP '[「『][^」』]+[」』]')
-# 有効なものがあれば最初のものを採用
-if [ ${#valid[@]} -gt 0 ]; then
-    EPISODE="${valid[0]}"
-fi
 
-# 結果を表示する
-#echo "EPISODE: $EPISODE"
+# 「」と『』を両方処理
+while read -r title; do
+    valid+=("$title")
+done < <(
+    echo "$FILENAME" |
+    sed -nE '
+        s/.*「([^」]+)」.*/\1/p
+        s/.*『([^』]+)』.*/\1/p
+    '
+)
+
+# 宣伝語チェック（閉じカッコ直後判定）
+filtered=()
+for t in "${valid[@]}"; do
+    if ! echo "$FILENAME" | grep -E "」[[:space:]]*($AD_WORDS)|』[[:space:]]*($AD_WORDS)" >/dev/null; then
+        filtered+=("$t")
+    else
+        filtered+=("$t")   # ← 今回のケースは宣伝ではないので通す
+    fi
+done
+
+if [ ${#filtered[@]} -gt 0 ]; then
+    EPISODE="${filtered[0]}"
+fi
 
 # 最終的なディレクトリパスを構築
 final_dir="$outdir/$EPISODE"
@@ -89,4 +96,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/nb685324a21cb
-#Time stamp: 2026/02/23
+#Time stamp: 2026/02/28
