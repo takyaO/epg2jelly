@@ -101,6 +101,7 @@ extractProgram() {
                                      -e 's/^＜[^＞]*＞[[:space:]]*//' \
                                      -e 's/^.国ドラマ[[:space:]]*//' \
                                      -e 's/^懐ドラ[[:space:]]*//' \
+                                     -e 's/^夜ドラ[[:space:]]*//' \
                                      -e 's/^韓流朝ドラ６[[:space:]]*//' \
                                      -e 's/^台湾ドラマ[[:space:]]*//' \
                                      -e 's/^大河ドラマ[[:space:]]*//' \
@@ -257,4 +258,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/01/17
+#Time stamp: 2026/03/07
