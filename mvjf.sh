@@ -89,6 +89,7 @@ extractProgram() {
 
     # 先頭文字列削除
     FILENAME=$(echo "$input_file"  | sed -e 's/[\/:*?"<>|]//g'  | sed -e 's/^【[^】]*】//' -e 's/^\[[^]*]\]//' -e 's/^\[[^]*]\]//' \
+				     -e 's/^火アニバル[[:space:]]*//' \
 				     -e 's/^プチプチ・アニメ[[:space:]]*//' \
                                      -e 's/^アニメ[[:space:]]*//' \
                                      -e 's/^ミニアニメ[[:space:]]*//' \
@@ -258,4 +259,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/03/07
+#Time stamp: 2026/04/08
