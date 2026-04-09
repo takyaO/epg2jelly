@@ -210,23 +210,43 @@ extractProgram() {
     echo "$PROGRAM"
 }
 
-PROGRAM=$(extractProgram "$(basename "$input_file")")
+base="$(basename "$input_file")"
+matched_folder=""
 
-# リストファイルから既存のフォルダ名を検索（上から順に）
-matched_folder="$PROGRAM"
+# まず basename で照合
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
         if [[ -n "$existing" ]]; then
-            # 部分一致チェック：新しいフォルダ名が既存の文字列を含む、または既存の文字列が新しいフォルダ名を含む
-            if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
+            if [[ "$base" == *"$existing"* ]] || [[ "$existing" == *"$base"* ]]; then
                 matched_folder="$existing"
-                break  # 最初に見つかったものを使う
+                break
             fi
         fi
     done < "$LIST_FILE"
 fi
 
-PROGRAM="$matched_folder"
+# ヒットしなければ extractProgram
+if [[ -z "$matched_folder" ]]; then
+    PROGRAM=$(extractProgram "$base")
+
+    # extractProgram結果で再照合
+    if [ -f "$LIST_FILE" ]; then
+        while IFS= read -r existing; do
+            if [[ -n "$existing" ]]; then
+                if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
+                    matched_folder="$existing"
+                    break
+                fi
+            fi
+        done < "$LIST_FILE"
+    fi
+
+    # 見つかればそれ、なければ抽出結果
+    PROGRAM="${matched_folder:-$PROGRAM}"
+else
+    # 最初の照合でヒットした場合
+    PROGRAM="$matched_folder"
+fi
 
 
 # 最終的なディレクトリパス
@@ -259,4 +279,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/04/08
+#Time stamp: 2026/04/09
