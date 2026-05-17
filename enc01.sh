@@ -2,9 +2,10 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
-#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset fast -threads 10)
 FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset medium )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -126,7 +127,8 @@ trim() {
     fi
 
     if [[ "$HAS_SUBS" == "yes" ]]; then
-        CODEC_OPT+=(-c:s mov_text)
+        # 【デバッグ変更点】字幕エンコード時に、タイムスタンプをパーツの開始位置(0秒ベース)にリセットするフィルタを適用
+        CODEC_OPT+=(-c:s mov_text -filter:s "setpts=PTS-START_PTS")
     fi
 
     if [[ "$AUDIO_COUNT" -gt 0 ]]; then
@@ -138,10 +140,10 @@ trim() {
     # chap_out.txt から SCPos のみを抽出（昇順）
     mapfile -t SC_FRAMES < <(
 	grep 'SCPos:' "$CHAPFILE" \
-	    | grep -v '^[[:space:]]*#' \
-	    | grep -o 'SCPos:[0-9]\+' \
-	    | sed 's/SCPos://' \
-	    | sort -n
+            | grep -v '^[[:space:]]*#' \
+            | grep -o 'SCPos:[0-9]\+' \
+            | sed 's/SCPos://' \
+            | sort -n
     )
     
     CHAP_META="chapters.ffmeta"
@@ -176,31 +178,31 @@ trim() {
 
             # --- SCPos によるチャプター ---
             for SCF in "${SC_FRAMES[@]}"; do
-		# Trim区間外は無視
-		if (( SCF < STARTF || SCF >= ENDF )); then
+        # Trim区間外は無視
+        if (( SCF < STARTF || SCF >= ENDF )); then
                     continue
-		fi
+        fi
 
-		OUTSEC=$(bc_calc "$OUT_OFFSET + ($SCF - $STARTF) / $FPS")
-		START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
+        OUTSEC=$(bc_calc "$OUT_OFFSET + ($SCF - $STARTF) / $FPS")
+        START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
 
-		DIFF=$((START_MS - LAST_START_MS))
-		[ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+        DIFF=$((START_MS - LAST_START_MS))
+        [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
 
-		# 近すぎるチャプターは抑止
-		if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
-                    continue
-		fi
+        # 近すぎるチャプターは抑止
+        if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
+            continue
+        fi
 
-		CHAP_INDEX=$((CHAP_INDEX+1))
-		{
+        CHAP_INDEX=$((CHAP_INDEX+1))
+        {
                     echo "[CHAPTER]"
                     echo "TIMEBASE=1/1000"
                     echo "START=$START_MS"
                     echo "title=Chapter $CHAP_INDEX"
-		} >> "$CHAP_META"
+        } >> "$CHAP_META"
 
-		LAST_START_MS="$START_MS"
+        LAST_START_MS="$START_MS"
             done
 
             # --- 出力時間を進める ---
@@ -209,41 +211,28 @@ trim() {
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
-#字幕が2,3秒ずれる
-#            if (( $(echo "$STARTSEC >= 5" | bc -l) )); then
-#                START_BEFORE=$(echo "$STARTSEC - 5" | bc -l | sed 's/^\./0./')
-#                ffmpeg -ss "$START_BEFORE" -i "$INPUT" -ss 5 -t "$DURATION" \
-#                       "${FFMPEG_OPTS[@]}" \
-#                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-#                       -map_metadata 0 \
-#                       -avoid_negative_ts make_zero \
-#                       "$PART"
-#            else
-#                ffmpeg -i "$INPUT" -ss "$STARTSEC" -t "$DURATION" \
-#                       "${FFMPEG_OPTS[@]}" \
-#                       "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" \
-#                       -map_metadata 0 \
-#                       -avoid_negative_ts make_zero \
-#                       "$PART"
-#            fi
-
-	    ffmpeg \
-		-ss "$STARTSEC" \
-		-i "$INPUT" \
-		-t "$DURATION" \
-		"${FFMPEG_OPTS[@]}" \
-		-map_metadata 0 \
-		-avoid_negative_ts make_zero \
-		-fflags +genpts \
-		"${CODEC_OPT[@]}" \
-		"${STREAM_OPT[@]}" \
-		"$PART"
+        # 【デバッグ変更点】
+        # 1. -max_interleave_delta 0 を追加（高負荷時やCM跨ぎでの字幕の数十秒遅延を防止）
+        # 2. -fix_sub_duration を追加（字幕の表示期間のバグを補正）
+            nice -n 19 ionice -c 3 ffmpeg \
+		 -fix_sub_duration \
+		 -ss "$STARTSEC" \
+		 -i "$INPUT" \
+		 -t "$DURATION" \
+		 "${FFMPEG_OPTS[@]}" \
+		 -map_metadata 0 \
+		 -avoid_negative_ts make_zero \
+		 -fflags +genpts \
+		 -max_interleave_delta 0 \
+		 "${CODEC_OPT[@]}" \
+		 "${STREAM_OPT[@]}" \
+		 "$PART"
 
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
-	    
+        
             line=${line#*"Trim("}
-	done
+    done
     done < "$TRIMFILE"
 
     title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
@@ -274,11 +263,13 @@ trim() {
     METADATA_OPT+=(-metadata:s:a:0 language="$AUDIO_LANG")
     METADATA_OPT+=(-disposition:a:0 default)
     
+    # 【デバッグ変更点】結合時にも念のため -max_interleave_delta 0 を付与
     ffmpeg -hide_banner -loglevel error -y \
            -f concat -safe 0 -i "$PARTS_LIST" \
-	   -i "$CHAP_META" \
+           -i "$CHAP_META" \
            -c copy -map 0 \
            -map_metadata -1 \
+           -max_interleave_delta 0 \
            "${METADATA_OPT[@]}" \
            "$OUTPUT"
 
