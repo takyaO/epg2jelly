@@ -2,10 +2,11 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
+FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+#FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset medium )
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow )
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -251,17 +252,35 @@ trim() {
         METADATA_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
     fi
 
-    # 音声言語取得
-    AUDIO_LANG=$(ffprobe -v error \
-			 -select_streams a:0 \
-			 -show_entries stream_tags=language \
-			 -of default=nw=1:nk=1 "$INPUT")
-
-    # フォールバック
-    [[ -z "$AUDIO_LANG" ]] && AUDIO_LANG=jpn
-
-    METADATA_OPT+=(-metadata:s:a:0 language="$AUDIO_LANG")
-    METADATA_OPT+=(-disposition:a:0 default)
+    # 全音声ストリームのメタデータを取得・設定
+    for ((i=0; i<AUDIO_COUNT; i++)); do
+        # 言語タグを取得
+        AUDIO_LANG=$(ffprobe -v error \
+			     -select_streams a:$i \
+			     -show_entries stream_tags=language \
+			     -of default=nw=1:nk=1 "$INPUT")
+        
+        # フォールバック（取得できなければ jpn）
+        [[ -z "$AUDIO_LANG" ]] && AUDIO_LANG=jpn
+        METADATA_OPT+=(-metadata:s:a:$i language="$AUDIO_LANG")
+        
+        # タイトル/ラベル（handler_name）を取得 - "AAC - Stream"の代わりに元のラベルを保持
+        AUDIO_TITLE=$(ffprobe -v error \
+			      -select_streams a:$i \
+			      -show_entries stream_tags=title \
+			      -of default=nw=1:nk=1 "$INPUT")
+        
+        if [[ -n "$AUDIO_TITLE" ]]; then
+            METADATA_OPT+=(-metadata:s:a:$i title="$AUDIO_TITLE")
+        fi
+        
+        # Disposition（デフォルト設定）- 第1ストリームをデフォルトに、他は通常設定
+        if [[ $i -eq 0 ]]; then
+            METADATA_OPT+=(-disposition:a:$i default)
+        else
+            METADATA_OPT+=(-disposition:a:$i 0)
+        fi
+    done
     
     # 【デバッグ変更点】結合時にも念のため -max_interleave_delta 0 を付与
     ffmpeg -hide_banner -loglevel error -y \
