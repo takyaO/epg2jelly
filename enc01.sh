@@ -2,9 +2,9 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
-#FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
+FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset medium )
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow )
 
