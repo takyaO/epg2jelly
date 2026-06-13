@@ -7,6 +7,10 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 メディアサーバー管理下のフォルダに**階層構造で配置**します。
 
+## プライバシー重視
+
+完全ローカル動作。外部サーバーとの通信は一切ありません。
+
 ## 動作要件
 
 1. **EPGStation** 

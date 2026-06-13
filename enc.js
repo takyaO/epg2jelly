@@ -968,7 +968,7 @@ function generateSplitOutputs() {
             ...useCodecPreArgs,  // 入力ファイルの前に追加
             ...ss,
             '-i', getEnv('INPUT'),
-            '-map', '0:v',
+            '-map', '0:0',
             '-c:v', useCodec,
             ...audio.args,
             ...useCodecPostArgs, // 入力ファイルの後に追加
@@ -987,7 +987,7 @@ function generateSplitOutputs() {
             ...useCodecPreArgs,  // 入力ファイルの前に追加
             ...ss,
             '-i', getEnv('INPUT'),
-            '-map', '0:v',
+            '-map', '0:0',
             '-c:v', useCodec,
             ...audio.args,
             ...useCodecPostArgs, // 入力ファイルの後に追加
@@ -1065,4 +1065,4 @@ function generateSplitOutputs() {
 })();
 
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/02/01
+// Time stamp: 2026/06/13
