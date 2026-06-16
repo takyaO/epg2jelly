@@ -28,15 +28,15 @@ function checkTsreadexAvailability() {
 }
 
 /**
- * ffprobeでTSファイルを解析し、Video Streamを持つService(Program)数を判定
+ * ffprobeでTSファイルを解析し、Video Stream数でtsreadex必要性を判定
  * @param {string} filePath 
- * @returns {Object} { programCount, videoProgramCount, targetProgramId, needsTsreadex }
+ * @returns {Object} { videoStreamCount, targetProgramId, needsTsreadex }
  */
 function analyzeTsStructure(filePath) {
     try {
         const probeArgs = [
-            '-show_programs',
-            '-show_streams',
+            '-show_programs',  // program_id取得のため必要
+            '-show_streams',   // video streamカウントのため必要
             '-print_format', 'json',
             ...getAnalyze(),
             filePath
@@ -44,52 +44,49 @@ function analyzeTsStructure(filePath) {
         const stdout = execFileSync(getEnv('FFPROBE'), probeArgs, { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10 });
         const data = JSON.parse(stdout);
 
-        let videoProgramCount = 0;
-        let targetProgramId = null;
+        // 1. 全ストリームから codec_type == "video" のものをカウント（Program構造に関係なく）
+        const allStreams = data.streams || [];
+        const videoStreams = allStreams.filter(s => s.codec_type === 'video');
+        const videoStreamCount = videoStreams.length;
         
-        // Program 単位での解析
-        // 各ProgramがVideo Streamを持つか確認し、Videoを持つProgram数をカウント
+        console.log(`Detected ${videoStreamCount} video stream(s) in TS`);
+
+        // 2. tsreadex必要性判定: video streamが2個以上の場合のみ
+        // これにより、地デジの同一周波数内複数サービス（Eテレ等）で
+        // 自サービスが単一video streamの場合はtsreadexを使用しない（字幕・音声多重保持のため）
+        const needsTsreadex = videoStreamCount >= 2;
+
+        // 3. tsreadex実行時に必要なtargetProgramIdを決定
+        // video streamを持つ最初のprogramを選択
+        let targetProgramId = null;
         if (data.programs && Array.isArray(data.programs)) {
             for (const prog of data.programs) {
-                // 各Program内のstreamを確認
-                // streamsプロパティが存在する場合（ffprobeの出力形式による）
-                const streams = prog.streams || [];
-                const hasVideo = streams.some(s => s.codec_type === 'video');
-                
-                if (hasVideo) {
-                    videoProgramCount++;
-                    // 最初に見つかったVideoを持つProgramを対象とする
-                    if (targetProgramId === null) {
-                        targetProgramId = prog.program_id;
-                    }
+                const progStreams = prog.streams || [];
+                const hasVideo = progStreams.some(s => s.codec_type === 'video');
+                if (hasVideo && targetProgramId === null) {
+                    targetProgramId = prog.program_id;
+                    break;
                 }
             }
-        } else {
-            // programsがない場合は従来のfallback（streamsトップレベルで判定）
-            const videoStreams = (data.streams || []).filter(s => s.codec_type === 'video');
-            if (videoStreams.length > 1) {
-                videoProgramCount = videoStreams.length;
-            }
+        }
+        
+        // programsが取得できない場合のフォールバック
+        // （通常は発生しないが、一応video streamのindexから推測することはできないためnull）
+        if (!targetProgramId && videoStreamCount > 0) {
+            console.warn('Could not determine program_id from ffprobe output, tsreadex may fail');
         }
 
-        // 判定ロジック: Video Streamを持つProgramが2個以上の場合のみtsreadexが必要
-        // これにより、地デジの「NHK総合+Eテレ」など同一周波数内の複数サービスで
-        // 片方が映像のみ（または字幕サービス等）の場合はtsreadexを実行しない
-        const needsTsreadex = videoProgramCount >= 2;
-
         return {
-            programCount: data.programs ? data.programs.length : 0,
-            videoProgramCount,  // Videoを持つProgram数（新規追加）
-            targetProgramId,    // Videoを持つ最初のProgramのID
-            needsTsreadex
+            videoStreamCount,  // Video Streamの総数（判定基準）
+            targetProgramId,   // tsreadex -n 用のprogram_id
+            needsTsreadex      // true if videoStreamCount >= 2
         };
 
     } catch (err) {
         console.error('Error analyzing TS structure:', err.message);
-        // 解析失敗時は安全側に倒して tsreadex を使わない（従来通り）
+        // エラー時は安全側に倒して通常処理（video stream 1個として扱う）
         return { 
-            programCount: 0, 
-            videoProgramCount: 0, 
+            videoStreamCount: 1, 
             targetProgramId: null, 
             needsTsreadex: false 
         };
