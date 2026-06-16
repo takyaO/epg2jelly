@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（ h264_qsv, h264_vaapi, libx264 から選択）
-                                 // 自動判定に戻したいときは null にする
+// 自動判定に戻したいときは null にする
 // モジュールの読み込み
 const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
@@ -28,9 +28,9 @@ function checkTsreadexAvailability() {
 }
 
 /**
- * ffprobeでTSファイルを解析し、Program数とVideo Stream数を取得
+ * ffprobeでTSファイルを解析し、Video Streamを持つService(Program)数を判定
  * @param {string} filePath 
- * @returns {Object} { programCount, videoStreamCount, targetProgramId, needsTsreadex }
+ * @returns {Object} { programCount, videoProgramCount, targetProgramId, needsTsreadex }
  */
 function analyzeTsStructure(filePath) {
     try {
@@ -44,61 +44,55 @@ function analyzeTsStructure(filePath) {
         const stdout = execFileSync(getEnv('FFPROBE'), probeArgs, { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10 });
         const data = JSON.parse(stdout);
 
-        let programCount = 0;
+        let videoProgramCount = 0;
         let targetProgramId = null;
         
         // Program 単位での解析
+        // 各ProgramがVideo Streamを持つか確認し、Videoを持つProgram数をカウント
         if (data.programs && Array.isArray(data.programs)) {
-            programCount = data.programs.length;
-            
-            // 対象Program決定: 映像ストリームを含む最初のProgramを選択
-            // (通常、録画対象のサービスが該当する)
             for (const prog of data.programs) {
-                const hasVideo = prog.streams && prog.streams.some(s => s.codec_type === 'video');
-                if (hasVideo && targetProgramId === null) {
-                    targetProgramId = prog.program_id;
+                // 各Program内のstreamを確認
+                // streamsプロパティが存在する場合（ffprobeの出力形式による）
+                const streams = prog.streams || [];
+                const hasVideo = streams.some(s => s.codec_type === 'video');
+                
+                if (hasVideo) {
+                    videoProgramCount++;
+                    // 最初に見つかったVideoを持つProgramを対象とする
+                    if (targetProgramId === null) {
+                        targetProgramId = prog.program_id;
+                    }
                 }
+            }
+        } else {
+            // programsがない場合は従来のfallback（streamsトップレベルで判定）
+            const videoStreams = (data.streams || []).filter(s => s.codec_type === 'video');
+            if (videoStreams.length > 1) {
+                videoProgramCount = videoStreams.length;
             }
         }
 
-        // 全体のVideo Stream数 (Program関係なく、TS内の全Video PID数)
-        // streams がトップレベルにある場合も考慮
-        let videoStreamCount = 0;
-        const allStreams = data.streams || [];
-        
-        // programs配下のstreamsも含めてカウント
-        if (data.programs) {
-            data.programs.forEach(p => {
-                if (p.streams) allStreams.push(...p.streams);
-            });
-        }
-        
-        const uniqueVideoIndices = new Set();
-        allStreams.forEach(s => {
-            if (s.codec_type === 'video' && s.index !== undefined) {
-                if (!uniqueVideoIndices.has(s.index)) {
-                    uniqueVideoIndices.add(s.index);
-                    videoStreamCount++;
-                }
-            }
-        });
-
-        // 判定ロジック: 
-        // 1. Programが複数存在する
-        // 2. または、Video Streamが複数存在する (同一TS内に別サービスの映像PIDが含まれている可能性)
-        const needsTsreadex = (programCount > 1) || (videoStreamCount > 1);
+        // 判定ロジック: Video Streamを持つProgramが2個以上の場合のみtsreadexが必要
+        // これにより、地デジの「NHK総合+Eテレ」など同一周波数内の複数サービスで
+        // 片方が映像のみ（または字幕サービス等）の場合はtsreadexを実行しない
+        const needsTsreadex = videoProgramCount >= 2;
 
         return {
-            programCount,
-            videoStreamCount,
-            targetProgramId, // number | null
+            programCount: data.programs ? data.programs.length : 0,
+            videoProgramCount,  // Videoを持つProgram数（新規追加）
+            targetProgramId,    // Videoを持つ最初のProgramのID
             needsTsreadex
         };
 
     } catch (err) {
         console.error('Error analyzing TS structure:', err.message);
         // 解析失敗時は安全側に倒して tsreadex を使わない（従来通り）
-        return { programCount: 1, videoStreamCount: 1, targetProgramId: null, needsTsreadex: false };
+        return { 
+            programCount: 0, 
+            videoProgramCount: 0, 
+            targetProgramId: null, 
+            needsTsreadex: false 
+        };
     }
 }
 
@@ -116,12 +110,12 @@ function executeTsreadex(inputPath, programId, outputPath) {
         outFd = fs.openSync(outputPath, 'w');
         
         const result = spawnSync('tsreadex', 
-            ['-n', programId.toString(), inputPath], 
-            {
-                stdio: ['ignore', outFd, 'pipe'], // stdoutをファイルに、stderrはメモリに
-                timeout: 600000 // 10分タイムアウト (大きなファイル用)
-            }
-        );
+				 ['-n', programId.toString(), inputPath], 
+				 {
+				     stdio: ['ignore', outFd, 'pipe'], // stdoutをファイルに、stderrはメモリに
+				     timeout: 600000 // 10分タイムアウト (大きなファイル用)
+				 }
+				);
         
         if (result.status !== 0) {
             const errMsg = result.stderr ? result.stderr.toString() : 'Unknown error';
@@ -240,43 +234,43 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
                 metadataDate = date.toISOString().split('T')[0]; // YYYY-MM-DD形式
                 console.log('Metadata date will be added:', metadataDate);
             }
-    // ジャンルメタデータの生成
-    const genres = [];
-    console.log('Genre data from JSON:', {
-genre1: jsonData.genre1,
-subGenre1: jsonData.subGenre1,
-genre2: jsonData.genre2,
-subGenre2: jsonData.subGenre2,
-genre3: jsonData.genre3,
-subGenre3: jsonData.subGenre3
-    });
+	    // ジャンルメタデータの生成
+	    const genres = [];
+	    console.log('Genre data from JSON:', {
+		genre1: jsonData.genre1,
+		subGenre1: jsonData.subGenre1,
+		genre2: jsonData.genre2,
+		subGenre2: jsonData.subGenre2,
+		genre3: jsonData.genre3,
+		subGenre3: jsonData.subGenre3
+	    });
 
-    for (let i = 1; i <= 3; i++) {
-const genreKey = `genre${i}`;
-const subGenreKey = `subGenre${i}`;
+	    for (let i = 1; i <= 3; i++) {
+		const genreKey = `genre${i}`;
+		const subGenreKey = `subGenre${i}`;
 
-console.log(`Processing ${genreKey}:`, jsonData[genreKey], `${subGenreKey}:`, jsonData[subGenreKey]);
+		console.log(`Processing ${genreKey}:`, jsonData[genreKey], `${subGenreKey}:`, jsonData[subGenreKey]);
 
-// genreがundefinedまたはnullでない場合に処理（0は有効な値）
-if (jsonData[genreKey] !== undefined && jsonData[genreKey] !== null) {
-    const mainGenre = genreMap[jsonData[genreKey]] || `ジャンル${jsonData[genreKey]}`;
-    const subGenre = (jsonData[subGenreKey] !== undefined && jsonData[subGenreKey] !== null)
-  ? (jsonData[subGenreKey] !== 0 ? subGenreMap[jsonData[subGenreKey]] || `サブジャンル${jsonData[subGenreKey]}` : null)
-  : null;
+		// genreがundefinedまたはnullでない場合に処理（0は有効な値）
+		if (jsonData[genreKey] !== undefined && jsonData[genreKey] !== null) {
+		    const mainGenre = genreMap[jsonData[genreKey]] || `ジャンル${jsonData[genreKey]}`;
+		    const subGenre = (jsonData[subGenreKey] !== undefined && jsonData[subGenreKey] !== null)
+			  ? (jsonData[subGenreKey] !== 0 ? subGenreMap[jsonData[subGenreKey]] || `サブジャンル${jsonData[subGenreKey]}` : null)
+			  : null;
 
-    const genreText = subGenre ? `${mainGenre} - ${subGenre}` : mainGenre;
-    genres.push(genreText);
-    console.log(`Added genre: ${genreText}`);
-} else {
-    console.log(`Skipping ${genreKey} - undefined or null`);
-}
-    }
-    if (genres.length > 0) {
-metadataGenre = genres.join(' / ');
-console.log('Final metadata genre:', metadataGenre);
-    } else {
-console.log('No valid genres found');
-    }
+		    const genreText = subGenre ? `${mainGenre} - ${subGenre}` : mainGenre;
+		    genres.push(genreText);
+		    console.log(`Added genre: ${genreText}`);
+		} else {
+		    console.log(`Skipping ${genreKey} - undefined or null`);
+		}
+	    }
+	    if (genres.length > 0) {
+		metadataGenre = genres.join(' / ');
+		console.log('Final metadata genre:', metadataGenre);
+	    } else {
+		console.log('No valid genres found');
+	    }
             if (genres.length > 0) {
                 metadataGenre = genres.join(' / ');
                 console.log('Metadata genre will be added:', metadataGenre);
@@ -338,8 +332,119 @@ function getEnv(variableName) {
     return envs[variableName];
 }
 
-// --- 不要な字幕関連関数は削除 ---
-// checkLibaribb24Availability, detectAllSubtitleStreams, getSubTitlesArg は削除済み
+// --- 字幕関連関数を復活 ---
+
+// libaribb24の利用可能性をチェック
+function checkLibaribb24Availability() {
+    try {
+        // シンプルにバージョン情報だけでチェック
+        const versionResult = execFileSync(getEnv('FFMPEG'), ['-version'], { encoding: 'utf8' });
+        const isAvailable = versionResult.includes('libaribb24');
+
+        console.log('libaribb24 available:', isAvailable);
+
+        // デバッグ用に詳細を出力
+        if (!isAvailable) {
+            const configLine = versionResult.split('\n').find(line => line.includes('configuration:'));
+            console.log('Build configuration:', configLine);
+        }
+
+        return isAvailable;
+    } catch (error) {
+        console.error('Error in libaribb24 check, assuming available:', error.message);
+        return true; // エラー時は利用可能と仮定
+    }
+}
+
+// すべての字幕ストリームを検出する包括的な関数
+function detectAllSubtitleStreams() {
+    try {
+        const options = [
+            ...getAnalyze(), // 分析オプションを追加
+            '-v', 'error',
+            '-select_streams', 's',
+            '-show_entries', 'stream=index,codec_name,codec_type,tags:stream_tags=language',
+            '-of', 'json',
+            getEnv('INPUT')
+        ];
+
+        const result = execFileSync(getEnv('FFPROBE'), options, { encoding: 'utf8' });
+        const info = JSON.parse(result);
+        const subtitleStreams = [];
+
+        if (info.streams && info.streams.length > 0) {
+            // すべての字幕ストリームを対象とする（コーデック名に関わらず）
+            for (const stream of info.streams) {
+                if (stream.codec_type === 'subtitle') {
+                    const lang = stream.tags && stream.tags.language ? stream.tags.language : 'unknown';
+                    subtitleStreams.push(stream.index);
+                    console.log(`Found subtitle stream: index=${stream.index}, codec=${stream.codec_name}, language=${lang}`);
+
+                    // arib_captionの場合は特別にログ輸出
+                    if (stream.codec_name === 'arib_caption') {
+                        console.log(`  ARIB caption stream detected: index=${stream.index}`);
+                    }
+                }
+            }
+        }
+
+        console.log('All subtitle streams found:', subtitleStreams);
+        return subtitleStreams;
+    } catch (error) {
+        console.error('Error detecting subtitle streams:', error.message);
+        return [];
+    }
+}
+
+// 字幕の設定を取得
+function getSubTitlesArg(hasLibaribb24) {
+    const fix = [];
+    const map = [];
+    const fileName = getEnv('NAME');
+    const isSub = /\[字\]/.test(fileName);
+    console.log('Subtitle detection:', { fileName, isSub, hasLibaribb24, ignoreTags });
+    // ignoreTagsがtrueの場合は字幕を無視
+    if (ignoreTags) {
+        console.log('Ignore tags mode: skipping subtitle processing regardless of [字] tag');
+        return { fix: fix, map: map, isSub: false };
+    }
+    // [字]がある場合のみ字幕処理を実行
+    if (isSub) {
+        if (hasLibaribb24) {
+            fix.push('-fix_sub_duration');
+            console.log('libaribb24 is available, using -fix_sub_duration');
+
+            // 複数の方法で字幕ストリームを検出
+            const subtitleStreams = detectAllSubtitleStreams();
+            console.log('All detected subtitle streams:', subtitleStreams);
+
+            if (subtitleStreams.length > 0) {
+                // 検出されたすべての字幕ストリームをマップ
+                for (let i = 0; i < subtitleStreams.length; i++) {
+                    map.push('-map', `0:${subtitleStreams[i]}?`);
+                    map.push(`-c:s:${i}`, 'mov_text');
+                    // 修正: 字幕ストリームのメタデータ指定を修正
+                    map.push(`-metadata:s:s:${i}`, 'language=jpn');
+                }
+                console.log('Mapped subtitle streams:', map);
+            } else {
+                console.log('No subtitle streams found, trying fallback method');
+
+                // フォールバック: すべての字幕ストリームをマップ
+                map.push('-map', '0:s?');
+                map.push('-c:s', 'mov_text');
+                // 修正: 字幕ストリームのメタデータ指定を修正
+                map.push('-metadata:s:s:0', 'language=jpn');
+            }
+        } else {
+            console.log('libaribb24 is not available, skipping subtitle mapping to avoid errors');
+            // libaribb24がない場合は字幕ストリームをマップしない
+        }
+    } else {
+        console.log('No [字] tag in filename, skipping subtitle processing');
+    }
+    return { fix: fix, map: map, isSub: isSub };
+}
 
 // libfdk_aacの利用可能性をチェック
 function checkLibfdkAacAvailability() {
@@ -440,7 +545,7 @@ function checkH264VaapiAvailability() {
         // エンコーダーリストを確認
         const encodersOptions = ['-encoders'];
         const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
-       const hasH264Vaapi = encodersResult.includes('h264_vaapi') && encodersResult.includes('H.264');
+	const hasH264Vaapi = encodersResult.includes('h264_vaapi') && encodersResult.includes('H.264');
         console.log(`h264_vaapi detection - Encoders: ${hasH264Vaapi}`);
         // ハードウェアデバイスの可用性もチェック
         if (hasH264Vaapi) {
@@ -568,7 +673,7 @@ function findMainAudioStream(audioStreams) {
     // 次にタイトルから判断
     const mainByTitle = audioStreams.find(stream =>
         stream.title && (stream.title.includes('主') || stream.title.includes('メイン') ||
-                        stream.title.includes('main') || stream.title.includes('primary')));
+                         stream.title.includes('main') || stream.title.includes('primary')));
 
     if (mainByTitle) {
         console.log(`Found main audio stream by title: ${mainByTitle.index} (${mainByTitle.title})`);
@@ -744,7 +849,7 @@ function determineAudioLanguages(audioStreams, fileName) {
     return languageMap;
 }
 
-// --- メイン処理 (大きく変更) ---
+// --- メイン処理 ---
 (() => {
     const originalInputFile = inputFile; // 元のファイルパスを保存
     let tempCleanFile = null;
@@ -755,9 +860,9 @@ function determineAudioLanguages(audioStreams, fileName) {
         console.log('Analyzing TS structure...');
         const analysis = analyzeTsStructure(originalInputFile);
         
-        console.log(`TS Analysis: Programs=${analysis.programCount}, Videos=${analysis.videoStreamCount}, TargetPID=${analysis.targetProgramId}, NeedsTsreadex=${analysis.needsTsreadex}`);
+        console.log(`TS Analysis: Programs=${analysis.programCount}, VideoPrograms=${analysis.videoProgramCount}, TargetPID=${analysis.targetProgramId}, NeedsTsreadex=${analysis.needsTsreadex}`);
         
-        // 2. tsreadex が必要か判定
+        // 2. tsreadex が必要か判定（Video Streamを持つProgramが2個以上）
         if (analysis.needsTsreadex) {
             // 3. tsreadex の存在確認
             if (!checkTsreadexAvailability()) {
@@ -784,8 +889,6 @@ function determineAudioLanguages(audioStreams, fileName) {
                 
             } catch (err) {
                 console.error('tsreadex processing failed:', err.message);
-                // 失敗時は元のファイルで続行すべきか、それとも終了すべきか？
-                // 仕様上「処理を終了」が適切（中途半端なクリーンアップを防ぐため）
                 process.exit(1);
             }
         }
@@ -804,14 +907,14 @@ function determineAudioLanguages(audioStreams, fileName) {
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
         useCodecPostArgs.push('-r', '30000/1001');
         useCodecPostArgs.push('-aspect', '16:9');
-        useCodecPostArgs.push('-preset', 'slow');
+        useCodecPostArgs.push('-preset', 'veryslow');
         useCodecPostArgs.push('-global_quality', '21');
         useCodecPostArgs.push('-profile:v', 'high');
         useCodecPostArgs.push('-level', '4.2');
-//        useCodecPostArgs.push('-look_ahead', '1');
+	//        useCodecPostArgs.push('-look_ahead', '1');
         useCodecPostArgs.push('-extbrc', '1');
         useCodecPostArgs.push('-b_strategy', '1');
-//        useCodecPostArgs.push('-threads', '10');
+	//        useCodecPostArgs.push('-threads', '10');
     } else if (useCodec === 'libx264') {
         useCodecPreArgs.push('-fflags', '+genpts');
         useCodecPostArgs.push('-vf', 'yadif');
@@ -836,15 +939,16 @@ function determineAudioLanguages(audioStreams, fileName) {
     // 音声コーデックを決定
     const audioCodec = getAudioCodec();
 
-    // 字幕関連処理は削除 (仕様に基づき)
-    // const hasLibaribb24 = checkLibaribb24Availability(); 
-    // const sub = getSubTitlesArg(hasLibaribb24);
-    
+    // 字幕設定 - libaribb24の可用性をチェックしてから取得（復活）
+    const hasLibaribb24 = checkLibaribb24Availability();
+    const sub = getSubTitlesArg(hasLibaribb24);
     const audio = getAudioArgs(audioCodec);
 
     // 固定で3秒カット
     const cutSecond = fixedCutSecond;
     const ss = cutSecond > 0 ? ['-ss', cutSecond.toString()] : [];
+    // 字幕ストリームが有効かどうかをチェック（復活）
+    const hasValidSubtitles = sub.map.length > 0;
 
     // メタデータ引数の準備
     const metadataArgs = [];
@@ -863,25 +967,49 @@ function determineAudioLanguages(audioStreams, fileName) {
         metadataArgs.push('-metadata', `genre=${metadataGenre}`);
     }
 
-    // FFmpeg引数の組み立て (字幕マップを削除)
+    // FFmpeg引数の組み立て（字幕対応に戻す）
     let outputArgs;
+    let additionalOutputs = [];
 
-    // 字幕なしシンプル版（仕様より）
-    outputArgs = [
-        '-y',
-        ...getAnalyze(),
-        ...useCodecPreArgs,  // 入力ファイルの前に追加
-        ...ss,
-        '-i', getEnv('INPUT'),
-        '-map', '0:0',       // Video
-        '-c:v', useCodec,
-        ...audio.args,       // Audio maps (-map 0:x ...) and codec settings
-        ...useCodecPostArgs, // 入力ファイルの後に追加
-        ...metadataArgs,     // メタデータを追加
-        // --- 字幕関連オプション削除 ---
-        getEnv('OUTPUT')
-    ];
-
+    if (hasValidSubtitles) {
+        // 字幕ありでエンコード
+        outputArgs = [
+            '-y',
+            ...getAnalyze(),
+            ...sub.fix,
+            ...useCodecPreArgs,  // 入力ファイルの前に追加
+            ...ss,
+            '-i', getEnv('INPUT'),
+            '-map', '0:0',
+            '-c:v', useCodec,
+            ...audio.args,
+            ...useCodecPostArgs, // 入力ファイルの後に追加
+            ...metadataArgs,     // メタデータを追加
+            ...sub.map,          // 字幕マップ（復活）
+            getEnv('OUTPUT'),
+            ...additionalOutputs
+        ];
+        console.log('Encoding with subtitles');
+    } else {
+        // 字幕なしでエンコード
+        outputArgs = [
+            '-y',
+            ...getAnalyze(),
+            ...sub.fix,
+            ...useCodecPreArgs,  // 入力ファイルの前に追加
+            ...ss,
+            '-i', getEnv('INPUT'),
+            '-map', '0:0',
+            '-c:v', useCodec,
+            ...audio.args,
+            ...useCodecPostArgs, // 入力ファイルの後に追加
+            ...metadataArgs,     // メタデータを追加
+            getEnv('OUTPUT'),
+            ...additionalOutputs
+        ];
+        console.log('Encoding without subtitles');
+    }
+    
     console.log('Input file:', getEnv('INPUT'));
     console.log('Output file:', getEnv('OUTPUT'));
     console.log('FFmpeg command:', 'ffmpeg', outputArgs.join(' '));
@@ -922,6 +1050,7 @@ function determineAudioLanguages(audioStreams, fileName) {
             averageSpeed: duration > 0 ? Math.floor(duration / elapsed) + 'x' : 'N/A',
             useCodec, cutSecond,
             tsreadexUsed: shouldDeleteTemp,
+            subtitlesIncluded: hasValidSubtitles, // 字幕情報をログに追加
             metadataIncluded: metadataArgs.length > 0,
             audioCodec: audioCodec,
             ignoreTags: ignoreTags
@@ -933,7 +1062,7 @@ function determineAudioLanguages(audioStreams, fileName) {
             console.log('Successfully encoded:', logs);
         }
         
-        // 6. 後処理: 一時ファイル削除
+        // 後処理: 一時ファイル削除
         if (shouldDeleteTemp && tempCleanFile) {
             try {
                 fs.unlinkSync(tempCleanFile);
@@ -967,4 +1096,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/14
+// Time stamp: 2026/06/16
