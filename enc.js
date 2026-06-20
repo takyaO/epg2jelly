@@ -10,7 +10,6 @@ const fs = require('fs');
 const os = require('os'); // 一時ファイル用
 
 // --- tsreadex 関連 helper 関数群 ---
-
 /**
  * PATH上に tsreadex が存在するかチェック
  */
@@ -130,8 +129,6 @@ function executeTsreadex(inputPath, programId, outputPath) {
     }
 }
 
-// --- 既存の helper 関数 (変更なし or 軽微な修正) ---
-
 // コマンドライン引数の解析
 const args = process.argv.slice(2);
 // 新しいオプションフラグ
@@ -169,6 +166,7 @@ let metadataTitle = null;
 let metadataDate = null;
 let metadataGenre = null;
 // ジャンル分類表(ARIB STD-B10)
+// 大分類マップ（既存）
 const genreMap = {
     0: "ニュース／報道",
     1: "スポーツ",
@@ -184,19 +182,150 @@ const genreMap = {
     11: "福祉",
     12: "予備（未使用・その他）",
     13: "予備（未使用・その他）",
-    14: "予備（未使用・その他）",
-    15: "予備（未使用・その他）"
+    14: "拡張",
+    15: "その他"
 };
+
+// 中分類マップ（大分類依存の階層構造）
 const subGenreMap = {
-    0: "一般",
-    1: "天気",
-    2: "特集／ドキュメント",
-    3: "解説",
-    4: "討論",
-    5: "会見",
-    6: "特別番組",
-    7: "その他"
+    0: {  // ニュース/報道
+        0: "定時・総合",
+        1: "天気",
+        2: "特集・ドキュメント",
+        3: "政治・国会",
+        4: "経済・市況",
+        5: "海外・国際",
+        6: "解説",
+        7: "討論・会談",
+        8: "報道特番",
+        9: "ローカル・地域",
+        10: "交通",
+        15: "その他"
+    },
+    1: {  // スポーツ
+        0: "スポーツニュース",
+        1: "野球",
+        2: "サッカー",
+        3: "ゴルフ",
+        4: "その他の球技",
+        5: "相撲・格闘技",
+        6: "オリンピック・国際大会",
+        7: "マラソン・陸上・水泳",
+        8: "モータースポーツ",
+        9: "マリン・ウィンタースポーツ",
+        10: "競馬・公営競技",
+        15: "その他"
+    },
+    2: {  // 情報/ワイドショー
+        0: "芸能・ワイドショー",
+        1: "ファッション",
+        2: "暮らし・住まい",
+        3: "健康・医療",
+        4: "ショッピング・通販",
+        5: "グルメ・料理",
+        6: "イベント",
+        7: "番組紹介・お知らせ",
+        15: "その他"
+    },
+    3: {  // ドラマ
+        0: "国内ドラマ",
+        1: "海外ドラマ",
+        2: "時代劇",
+        15: "その他"
+    },
+    4: {  // 音楽
+        0: "国内ロック・ポップス",
+        1: "海外ロック・ポップス",
+        2: "クラシック・オペラ",
+        3: "ジャズ・フュージョン",
+        4: "歌謡曲・演歌",
+        5: "ライブ・コンサート",
+        6: "ランキング・リクエスト",
+        7: "カラオケ・のど自慢",
+        8: "民謡・邦楽",
+        9: "童謡・キッズ",
+        10: "民族音楽・ワールドミュージック",
+        15: "その他"
+    },
+    5: {  // バラエティ
+        0: "クイズ",
+        1: "ゲーム",
+        2: "トークバラエティ",
+        3: "お笑い・コメディ",
+        4: "音楽バラエティ",
+        5: "旅バラエティ",
+        6: "料理バラエティ",
+        15: "その他"
+    },
+    6: {  // 映画
+        0: "洋画",
+        1: "邦画",
+        2: "アニメ",
+        15: "その他"
+    },
+    7: {  // アニメ/特撮
+        0: "国内アニメ",
+        1: "海外アニメ",
+        2: "特撮",
+        15: "その他"
+    },
+    8: {  // ドキュメンタリー/教養
+        0: "社会・時事",
+        1: "歴史・紀行",
+        2: "自然・動物・環境",
+        3: "宇宙・科学・医学",
+        4: "カルチャー・伝統文化",
+        5: "文学・文芸",
+        6: "スポーツ",
+        7: "ドキュメンタリー全般",
+        8: "インタビュー・討論",
+        15: "その他"
+    },
+    9: {  // 劇場/公演
+        0: "現代劇・新劇",
+        1: "ミュージカル",
+        2: "ダンス・バレエ",
+        3: "落語・演芸",
+        4: "歌舞伎・古典",
+        15: "その他"
+    },
+    10: {  // 趣味/教育
+        0: "旅・釣り・アウトドア",
+        1: "園芸・ペット・手芸",
+        2: "音楽・美術・工芸",
+        3: "囲碁・将棋",
+        4: "麻雀・パチンコ",
+        5: "車・オートバイ",
+        6: "コンピュータ・TVゲーム",
+        7: "会話・語学",
+        8: "幼児・小学生",
+        9: "中学生・高校生",
+        10: "大学生・受験",
+        11: "生涯教育・資格",
+        12: "教育問題",
+        15: "その他"
+    },
+    11: {  // 福祉
+        0: "高齢者",
+        1: "障害者",
+        2: "社会福祉",
+        3: "ボランティア",
+        4: "手話",
+        5: "文字(字幕)",
+        6: "音声解説",
+        15: "その他"
+    },
+    14: {  // 拡張
+        0: "BS/地上デジタル放送用番組付属情報",
+        1: "広帯域CSデジタル放送用拡張",
+        3: "サーバー型番組付属情報",
+        4: "IP放送用番組付属情報"
+    },
+    15: {  // その他
+        15: "その他"
+    }
 };
+
 // JSONファイルが指定された場合の処理
 if (jsonFilePath && fs.existsSync(jsonFilePath)) {
     try {
@@ -232,6 +361,7 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
                 console.log('Metadata date will be added:', metadataDate);
             }
 	    // ジャンルメタデータの生成
+	    // ジャンルメタデータの生成
 	    const genres = [];
 	    console.log('Genre data from JSON:', {
 		genre1: jsonData.genre1,
@@ -241,20 +371,30 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
 		genre3: jsonData.genre3,
 		subGenre3: jsonData.subGenre3
 	    });
-
+	    
 	    for (let i = 1; i <= 3; i++) {
 		const genreKey = `genre${i}`;
 		const subGenreKey = `subGenre${i}`;
-
 		console.log(`Processing ${genreKey}:`, jsonData[genreKey], `${subGenreKey}:`, jsonData[subGenreKey]);
-
+		
 		// genreがundefinedまたはnullでない場合に処理（0は有効な値）
 		if (jsonData[genreKey] !== undefined && jsonData[genreKey] !== null) {
 		    const mainGenre = genreMap[jsonData[genreKey]] || `ジャンル${jsonData[genreKey]}`;
-		    const subGenre = (jsonData[subGenreKey] !== undefined && jsonData[subGenreKey] !== null)
-			  ? (jsonData[subGenreKey] !== 0 ? subGenreMap[jsonData[subGenreKey]] || `サブジャンル${jsonData[subGenreKey]}` : null)
-			  : null;
-
+		    
+		    // 中分類の解決（大分類依存）
+		    let subGenre = null;
+		    if (jsonData[subGenreKey] !== undefined && jsonData[subGenreKey] !== null) {
+			const mainGenreCode = jsonData[genreKey];
+			const subGenreCode = jsonData[subGenreKey];
+			const subMap = subGenreMap[mainGenreCode];
+			
+			if (subMap && subMap[subGenreCode] !== undefined) {
+			    subGenre = subMap[subGenreCode];
+			} else {
+			    subGenre = `サブジャンル${subGenreCode}`;
+			}
+		    }
+		    
 		    const genreText = subGenre ? `${mainGenre} - ${subGenre}` : mainGenre;
 		    genres.push(genreText);
 		    console.log(`Added genre: ${genreText}`);
@@ -262,12 +402,14 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
 		    console.log(`Skipping ${genreKey} - undefined or null`);
 		}
 	    }
+	    
 	    if (genres.length > 0) {
 		metadataGenre = genres.join(' / ');
 		console.log('Final metadata genre:', metadataGenre);
 	    } else {
 		console.log('No valid genres found');
 	    }
+
             if (genres.length > 0) {
                 metadataGenre = genres.join(' / ');
                 console.log('Metadata genre will be added:', metadataGenre);
@@ -1093,4 +1235,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/16
+// Time stamp: 2026/06/20
