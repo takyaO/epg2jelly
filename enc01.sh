@@ -480,6 +480,34 @@ EOF
     # rm "$avs_file" "$CHAPFILE" "$CHAP_META"
 }
 
+make_tvshow_nfo() {
+    local folder="$1"
+    local file="$2"
+
+    local genres
+    genres=$(
+        ffprobe -v quiet \
+            -show_entries format_tags=genre \
+            -of default=noprint_wrappers=1:nokey=1 \
+            "$file" |
+        sed 's/ \/ /\n/g'
+    )
+
+    [ -z "$genres" ] && return
+
+    {
+        echo '<?xml version="1.0" encoding="UTF-8"?>'
+        echo '<tvshow>'
+        echo "  <title>${folder}</title>"
+
+        while IFS= read -r genre; do
+            echo "  <genre>${genre}</genre>"
+        done <<< "$genres"
+
+        echo '</tvshow>'
+    } > tvshow.nfo
+}
+
 # --- メイン処理 ---
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
     cd "$SOURCEDIR"
@@ -532,7 +560,12 @@ EOF
 			rm "$FILENAME.mp4.lwi"
 		    fi
 		fi
+		folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
+		echo "Folder name:" $folder, "$FILENAME.mp4"
+		make_tvshow_nfo "$folder" "$FILENAME.mp4"
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
+		cp tvshow.nfo  "$OUTDIR/$folder/"
+
 		notify 2 "mp4 created: $FILENAME"
             else
 		echo "ERROR: mp4 not created" >&2
