@@ -166,7 +166,7 @@ let metadataTitle = null;
 let metadataDate = null;
 let metadataGenre = null;
 // ジャンル分類表(ARIB STD-B10)
-// 大分類マップ（既存）
+// 大分類マップ
 const genreMap = {
     0: "ニュース／報道",
     1: "スポーツ",
@@ -361,7 +361,6 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
                 console.log('Metadata date will be added:', metadataDate);
             }
 	    // ジャンルメタデータの生成
-	    // ジャンルメタデータの生成
 	    const genres = [];
 	    console.log('Genre data from JSON:', {
 		genre1: jsonData.genre1,
@@ -470,8 +469,6 @@ function getEnv(variableName) {
     };
     return envs[variableName];
 }
-
-// --- 字幕関連関数を復活 ---
 
 // libaribb24の利用可能性をチェック
 function checkLibaribb24Availability() {
@@ -925,63 +922,89 @@ function getAudioArgs(audioCodec) {
     args.push('-ac', '2');
     return { args: args };
 }
-// 音声ストリームの言語を推測する関数
+
+// 必要最低限かつ効果の高い言語キーワードのみに絞る
+const LANGUAGE_KEYWORDS = [
+    { code: 'kor', patterns: [/kor/i, /korean/i, /韓国/, /韓/] },
+    { code: 'chi', patterns: [/chi/i, /chinese/i, /中国/, /中/] },
+    // ヨーロッパ言語もファイル名に含まれていた場合のために、定義だけは残してノーコストで構える
+    { code: 'ita', patterns: [/ita/i, /italian/i, /イタリア/, /伊/] },
+    { code: 'fra', patterns: [/fra/i, /french/i, /フランス/, /仏/] },
+    { code: 'deu', patterns: [/ger/i, /german/i, /deu/i, /ドイツ/, /独/] },
+];
+/**
+ * 音声ストリームの言語を推測する関数
+ */
 function determineAudioLanguages(audioStreams, fileName) {
     const isBilingual = /\[二\]/.test(fileName);
-    const isExplanation = /\[解\]/.test(fileName);
-    const isMultiAudio = /\[多\]/.test(fileName);
-    const isSecondary = /\[副\]/.test(fileName);
-
     const languageMap = {};
 
-    console.log('Determining audio languages:', { isBilingual, isExplanation, isMultiAudio, isSecondary });
-
-    // 既存の言語タグを確認
+    // 1. 既存の明示的な言語タグを確認
     for (const stream of audioStreams) {
         if (stream.language) {
             languageMap[stream.index] = stream.language;
-            console.log(`Stream ${stream.index} has explicit language tag: ${stream.language}`);
         }
     }
 
-    // ストリームタイトルから言語を推測
+    // 2. 文字列から言語を推測するインナー関数
+    function detectLanguage(text) {
+        if (!text) return null;
+        const lowerText = text.toLowerCase();
+        
+        // 日本語判定
+        if (lowerText.includes('jpn') || lowerText.includes('japanese') || lowerText.includes('日本語') || lowerText.includes('主') || lowerText.includes('メイン')) {
+            return 'jpn';
+        }
+        if (lowerText.includes('副') || lowerText.includes('解説') || lowerText.includes('comm') || lowerText.includes('comment')) {
+            return 'jpn';
+        }
+        // 英語判定（明示的なキーワードがある場合）
+        if (lowerText.includes('eng') || lowerText.includes('english') || lowerText.includes('英語') || lowerText.includes('英')) {
+            return 'eng';
+        }
+
+        // その他（アジア圏など）の特定言語キーワードマッチ
+        for (const lang of LANGUAGE_KEYWORDS) {
+            if (lang.patterns.some(pattern => pattern.test(lowerText))) {
+                return lang.code;
+            }
+        }
+        return null;
+    }
+
+    // 3. ストリームタイトルから言語を推測
     for (const stream of audioStreams) {
         if (!languageMap[stream.index] && stream.title) {
-            const title = stream.title.toLowerCase();
-            if (title.includes('eng') || title.includes('english') || title.includes('英語')) {
-                languageMap[stream.index] = 'eng';
-                console.log(`Stream ${stream.index} title suggests English: ${stream.title}`);
-            } else if (title.includes('jpn') || title.includes('japanese') || title.includes('日本語') || title.includes('主') || title.includes('メイン')) {
-                languageMap[stream.index] = 'jpn';
-                console.log(`Stream ${stream.index} title suggests Japanese: ${stream.title}`);
-            } else if (title.includes('副') || title.includes('解説') || title.includes('comm') || title.includes('comment')) {
-                // 副音声や解説は日本語と推測
-                languageMap[stream.index] = 'jpn';
-                console.log(`Stream ${stream.index} title suggests Japanese (secondary): ${stream.title}`);
+            const detected = detectLanguage(stream.title);
+            if (detected) {
+                languageMap[stream.index] = detected;
             }
         }
     }
 
-    // 言語タグがない場合の推測ロジック
+    // 4. 言語タグがない場合の推測ロジック
     const untaggedStreams = audioStreams.filter(stream => !languageMap[stream.index]);
 
     if (untaggedStreams.length > 0) {
         if (isBilingual && audioStreams.length >= 2) {
-            // [二]がある場合：最初のストリームを日本語、2番目を英語と推測
-            // ただし、既に言語が設定されているストリームを考慮
+            // [二] がある二カ国語放送の場合
             const mainStream = untaggedStreams.find(stream => stream.index === Math.min(...untaggedStreams.map(s => s.index)));
             const secondaryStream = untaggedStreams.find(stream => stream.index === Math.max(...untaggedStreams.map(s => s.index)));
 
             if (mainStream) languageMap[mainStream.index] = 'jpn';
-            if (secondaryStream && secondaryStream !== mainStream) languageMap[secondaryStream.index] = 'eng';
 
-            console.log('Bilingual content: assuming lower index stream is Japanese, higher index is English');
+            if (secondaryStream && secondaryStream !== mainStream) {
+                // まずファイル名から韓国語・中国語などのヒントがないか探す
+                const inferredFromFileName = detectLanguage(fileName);
+                
+                // ヒントがなければ、大半のケースを救うために 'eng' とする
+                languageMap[secondaryStream.index] = inferredFromFileName || 'eng';
+            }
         } else {
-            // その他の場合：すべて日本語と推測
+            // [二] がない、またはストリームが足りない場合はすべて日本語とみなす
             for (const stream of untaggedStreams) {
                 languageMap[stream.index] = 'jpn';
             }
-            console.log('Assuming all untagged streams are Japanese');
         }
     }
 
@@ -1047,7 +1070,7 @@ function determineAudioLanguages(audioStreams, fileName) {
         useCodecPostArgs.push('-r', '30000/1001');
         useCodecPostArgs.push('-aspect', '16:9');
         useCodecPostArgs.push('-preset', 'veryslow');
-        useCodecPostArgs.push('-global_quality', '21');
+        useCodecPostArgs.push('-global_quality', '22');
         useCodecPostArgs.push('-profile:v', 'high');
         useCodecPostArgs.push('-level', '4.2');
 	//        useCodecPostArgs.push('-look_ahead', '1');
@@ -1078,7 +1101,7 @@ function determineAudioLanguages(audioStreams, fileName) {
     // 音声コーデックを決定
     const audioCodec = getAudioCodec();
 
-    // 字幕設定 - libaribb24の可用性をチェックしてから取得（復活）
+    // 字幕設定 - libaribb24の可用性をチェックしてから取得
     const hasLibaribb24 = checkLibaribb24Availability();
     const sub = getSubTitlesArg(hasLibaribb24);
     const audio = getAudioArgs(audioCodec);
@@ -1086,7 +1109,7 @@ function determineAudioLanguages(audioStreams, fileName) {
     // 固定で3秒カット
     const cutSecond = fixedCutSecond;
     const ss = cutSecond > 0 ? ['-ss', cutSecond.toString()] : [];
-    // 字幕ストリームが有効かどうかをチェック（復活）
+    // 字幕ストリームが有効かどうかをチェック
     const hasValidSubtitles = sub.map.length > 0;
 
     // メタデータ引数の準備
@@ -1106,7 +1129,7 @@ function determineAudioLanguages(audioStreams, fileName) {
         metadataArgs.push('-metadata', `genre=${metadataGenre}`);
     }
 
-    // FFmpeg引数の組み立て（字幕対応に戻す）
+    // FFmpeg引数の組み立て
     let outputArgs;
     let additionalOutputs = [];
 
@@ -1124,7 +1147,7 @@ function determineAudioLanguages(audioStreams, fileName) {
             ...audio.args,
             ...useCodecPostArgs, // 入力ファイルの後に追加
             ...metadataArgs,     // メタデータを追加
-            ...sub.map,          // 字幕マップ（復活）
+            ...sub.map,          // 字幕マップ
             getEnv('OUTPUT'),
             ...additionalOutputs
         ];
@@ -1235,4 +1258,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/20
+// Time stamp: 2026/06/21
