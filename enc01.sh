@@ -561,10 +561,13 @@ make_tvshow_nfo() {
 		    fi
 		fi
 		folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
-		echo "Folder name:" $folder, "$FILENAME.mp4"
+
 		make_tvshow_nfo "$folder" "$FILENAME.mp4"
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
-		cp tvshow.nfo  "$OUTDIR/$folder/"
+
+		if ! grep -q "映画" tvshow.nfo; then
+		    cp tvshow.nfo "$OUTDIR/$folder/"
+		fi
 
 		notify 2 "mp4 created: $FILENAME"
             else
