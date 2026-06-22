@@ -508,6 +508,33 @@ make_tvshow_nfo() {
     } > tvshow.nfo
 }
 
+merge_tvshow_nfo() {
+    local src="$1"
+    local dst="$2"
+
+    if [ ! -f "$dst" ]; then
+        cp "$src" "$dst"
+        return
+    fi
+
+    {
+        echo '<?xml version="1.0" encoding="UTF-8"?>'
+        echo '<tvshow>'
+
+        grep '<title>' "$dst"
+
+        {
+            grep '<genre>' "$dst"
+            grep '<genre>' "$src"
+        } |
+        sort -u
+
+        echo '</tvshow>'
+    } > "${dst}.tmp"
+
+    mv "${dst}.tmp" "$dst"
+}
+
 # --- メイン処理 ---
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
     cd "$SOURCEDIR"
@@ -560,14 +587,20 @@ make_tvshow_nfo() {
 			rm "$FILENAME.mp4.lwi"
 		    fi
 		fi
-		folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
-
-		make_tvshow_nfo "$folder" "$FILENAME.mp4"
-		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
 
 		if ! grep -q "映画" tvshow.nfo; then
-		    cp tvshow.nfo "$OUTDIR/$folder/"
+		    folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用		    
+		    make_tvshow_nfo "$folder" "$FILENAME.mp4"
+
+		    dst="$OUTDIR/$folder/tvshow.nfo"
+		    if [ -f "$dst" ]; then
+			merge_tvshow_nfo tvshow.nfo "$dst"
+		    else
+			cp tvshow.nfo "$dst"
+		    fi
 		fi
+		
+		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
 
 		notify 2 "mp4 created: $FILENAME"
             else
