@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（ h264_qsv, h264_vaapi, libx264 から選択）
+const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（h264_qsv, h264_vaapi, libx264, h264_amf[未検証] から選択）
 // 自動判定に戻したいときは null にする
 // モジュールの読み込み
 const { spawn } = require('child_process');
@@ -598,6 +598,7 @@ function checkLibfdkAacAvailability() {
         return false;
     }
 }
+
 // 利用可能な音声コーデックを決定
 function getAudioCodec() {
     const hasLibfdkAac = checkLibfdkAacAvailability();
@@ -605,28 +606,41 @@ function getAudioCodec() {
     console.log(`Using audio codec: ${audioCodec}`);
     return audioCodec;
 }
+
+// 利用可能な映像コーデックを決定
 function getVideoCodec() {
     // 1. まず手動設定（FORCE_CODEC）があるか確認
     if (FORCE_CODEC) {
         console.log(`Manual override: Using ${FORCE_CODEC}`);
         return FORCE_CODEC;
     }
-    // 2. QSVのチェック
+
+    // 2. QSV (Intel環境) のチェック
     const hasH264Qsv = checkH264QsvAvailability();
     if (hasH264Qsv) {
         console.log('Using h264_qsv video codec');
         return 'h264_qsv';
     }
-    // 3. VA-APIのチェック
+
+    // 3. AMF (AMD環境) のチェックを追加
+    const hasH264Amf = checkH264AmfAvailability();
+    if (hasH264Amf) {
+        console.log('Using h264_amf video codec');
+        return 'h264_amf';
+    }
+
+    // 4. VA-API (Linux汎用 / Intel・AMD等) のチェック
     const hasH264Vaapi = checkH264VaapiAvailability();
     if (hasH264Vaapi) {
         console.log('Using h264_vaapi video codec');
         return 'h264_vaapi';
     }
-    // 4. Fallback
+
+    // 5. Fallback (ソフトウェア処理)
     console.log('Hardware codecs not available/not forced, using libx264');
     return 'libx264';
 }
+
 function checkH264QsvAvailability() {
     try {
         // エンコーダーリストを確認
@@ -1069,14 +1083,23 @@ function determineAudioLanguages(audioStreams, fileName) {
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
         useCodecPostArgs.push('-r', '30000/1001');
         useCodecPostArgs.push('-aspect', '16:9');
-        useCodecPostArgs.push('-preset', 'veryslow');
+        useCodecPostArgs.push('-preset', 'slow');
         useCodecPostArgs.push('-global_quality', '22');
         useCodecPostArgs.push('-profile:v', 'high');
         useCodecPostArgs.push('-level', '4.2');
 	//        useCodecPostArgs.push('-look_ahead', '1');
-        useCodecPostArgs.push('-extbrc', '1');
-        useCodecPostArgs.push('-b_strategy', '1');
+	//        useCodecPostArgs.push('-extbrc', '1');
+	//        useCodecPostArgs.push('-b_strategy', '1');
 	//        useCodecPostArgs.push('-threads', '10');
+    } else if (useCodec === 'h264_amf') {
+        useCodecPreArgs.push('-fflags', '+genpts');
+        useCodecPostArgs.push('-vf', 'yadif'); 
+        useCodecPostArgs.push('-r', '30000/1001');
+        useCodecPostArgs.push('-aspect', '16:9');
+        // --- 保守的（安全）なAMF固有設定 ---
+        useCodecPostArgs.push('-rc', 'cqp');             // 固定品質（CQP）モードを選択
+        useCodecPostArgs.push('-qp_i', '22', '-qp_p', '22', '-qp_b', '22'); // I/P/Bすべてのフレームクオリティを一括指定
+	useCodecPostArgs.push('-quality', 'quality');    // プリセット：画質優先（speed, balanced, quality が存在）
     } else if (useCodec === 'libx264') {
         useCodecPreArgs.push('-fflags', '+genpts');
         useCodecPostArgs.push('-vf', 'yadif');
