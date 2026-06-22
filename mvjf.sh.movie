@@ -1,5 +1,4 @@
 #!/bin/bash
-
 #映画用： すべての「…」『…』を抽出して、「公開」「直前」「記念」などを含むものは除外
 #
 #例：
@@ -18,8 +17,8 @@ while getopts ":n" opt; do
             ;;
     esac
 done
-
 shift $((OPTIND -1))
+
 # 移動対象ファイル名と出力先ディレクトリを受け取る
 input_file="$1"
 outdir="$2"
@@ -28,52 +27,68 @@ outdir="$2"
 if [ "$DRY_RUN" = "false" ]; then
     # 引数のチェック
     if [ "$#" -ne 2 ]; then
-	echo "Usage: $0 [-n] <input_file> <output_directory>"
-	exit 1
+        echo "Usage: $0 [-n] <input_file> <output_directory>"
+        exit 1
     fi
     # ファイルが存在するか
     if [ ! -f "$input_file" ]; then
-	echo "指定されたファイルが存在しません: $input_file"
-	exit 1
+        echo "指定されたファイルが存在しません: $input_file"
+        exit 1
     fi
     # 出力ディレクトリが存在するか
     if [ ! -d "$outdir" ]; then
-	echo "指定された出力ディレクトリが存在しません: $outdir"
-	exit 1
+        echo "指定された出力ディレクトリが存在しません: $outdir"
+        exit 1
     fi
 fi
 
 ## ファイル名からディレクトリとファイルパスを構築
 FILENAME=$(basename "$input_file")
-
 AD_WORDS="公開|直前|記念|特別|放送|SP"
 
+# 「」と『』を両方処理（複数マッチ対応）
 valid=()
-
-# 「」と『』を両方処理
-while read -r title; do
-    valid+=("$title")
+while IFS= read -r title; do
+    [ -n "$title" ] && valid+=("$title")
 done < <(
-    echo "$FILENAME" |
-    sed -nE '
-        s/.*「([^」]+)」.*/\1/p
-        s/.*『([^』]+)』.*/\1/p
-    '
+    echo "$FILENAME" | sed -nE 's/.*「([^」]+)」.*/\1/p; s/.*『([^』]+)』.*/\1/p'
 )
 
-# 宣伝語チェック（閉じカッコ直後判定）
+# 宣伝語チェック（閉じカッコ直後に宣伝語があるものは除外）
 filtered=()
 for t in "${valid[@]}"; do
-    if ! echo "$FILENAME" | grep -E "」[[:space:]]*($AD_WORDS)|』[[:space:]]*($AD_WORDS)" >/dev/null; then
-        filtered+=("$t")
+    # 抽出したタイトルの後に閉じカッコと宣伝語が続くかチェック
+    if echo "$FILENAME" | grep -E "(${t})[」』][[:space:]]*($AD_WORDS)" >/dev/null; then
+        # 宣伝語が含まれる場合は除外（スキップ）
+        echo "Debug: 宣伝語を検出したため除外: $t" >&2
     else
-        filtered+=("$t")   # ← 今回のケースは宣伝ではないので通す
+        filtered+=("$t")
     fi
 done
 
-if [ ${#filtered[@]} -gt 0 ]; then
-    EPISODE="${filtered[0]}"
+# フォールバック処理：括弧で抽出できなかった場合は先頭から__までを使用
+if [ ${#filtered[@]} -eq 0 ]; then
+    # 先頭から__までを抽出（[デ][二]などのメタデータは__で区切られている前提）
+    fallback_title=$(echo "$FILENAME" | sed -nE 's/^([^_]+)__.*/\1/p')
+    
+    if [ -n "$fallback_title" ]; then
+        filtered+=("$fallback_title")
+        echo "Debug: フォールバック処理で抽出: $fallback_title" >&2
+    else
+        # __がない場合は拡張子を除いた名前を使用
+        fallback_title="${FILENAME%.*}"
+        filtered+=("$fallback_title")
+        echo "Debug: __がないため拡張子除去で抽出: $fallback_title" >&2
+    fi
 fi
+
+# タイトルが抽出できなかった場合のエラーハンドリング
+if [ ${#filtered[@]} -eq 0 ]; then
+    echo "エラー: タイトルを抽出できませんでした: $FILENAME" >&2
+    exit 1
+fi
+
+EPISODE="${filtered[0]}"
 
 # 最終的なディレクトリパスを構築
 final_dir="$outdir/$EPISODE"
@@ -84,16 +99,16 @@ if [ "$DRY_RUN" = "true" ]; then
 else
     # ディレクトリを作成（存在しない場合のみ）
     mkdir -p "$final_dir" || {
-	echo "ディレクトリの作成に失敗しました: $final_dir"
-	exit 1
+        echo "ディレクトリの作成に失敗しました: $final_dir"
+        exit 1
     }
     # ファイルを移動
     mv "$input_file" "$final_dir" || {
-	echo "ファイルの移動に失敗しました: $input_file -> $final_dir"
-	exit 1
+        echo "ファイルの移動に失敗しました: $input_file -> $final_dir"
+        exit 1
     }
     echo "ファイルが正常に移動されました: mv '$input_file' '$final_dir' "
 fi
 
 #https://note.com/leal_walrus5520/n/nb685324a21cb
-#Time stamp: 2026/02/28
+#Time stamp: 2026/06/22
