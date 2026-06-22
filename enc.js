@@ -1082,15 +1082,15 @@ function determineAudioLanguages(audioStreams, fileName) {
         useCodecPostArgs.push('-vf', 'yadif');
         useCodecPostArgs.push('-preset', 'slow');
         useCodecPostArgs.push('-crf', '23');
+	useCodecPostArgs.push('-aspect', '16:9');
     } else if (useCodec === 'h264_vaapi') {
         useCodecPreArgs.push('-hwaccel', 'vaapi');
         useCodecPreArgs.push('-hwaccel_device', '/dev/dri/renderD128');
         //deinterlace option 1
         useCodecPreArgs.push('-hwaccel_output_format', 'vaapi'); // これによりVRAM直結になる
-        useCodecPostArgs.push('-vf', 'deinterlace_vaapi,scale_vaapi=w=1280:h=720');
+        useCodecPostArgs.push('-vf', 'deinterlace_vaapi,scale_vaapi=w=1920:h=1080');
         useCodecPostArgs.push('-r', '30000/1001');
         useCodecPostArgs.push('-aspect', '16:9');
-        // 画質設定：yadifの精度を活かすために ICQ モードを使用
         useCodecPostArgs.push('-rc_mode', 'ICQ');
         useCodecPostArgs.push('-global_quality', '20'); // x264のCRF23相当なら20〜21あたりが目安
         useCodecPostArgs.push('-profile:v', 'high');
@@ -1258,4 +1258,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/21
+// Time stamp: 2026/06/22
