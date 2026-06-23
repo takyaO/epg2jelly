@@ -165,6 +165,7 @@ let metadataDescription = null;
 let metadataTitle = null;
 let metadataDate = null;
 let metadataGenre = null;
+let metadataNetwork = null;  
 // ジャンル分類表(ARIB STD-B10)
 // 大分類マップ
 const genreMap = {
@@ -360,6 +361,13 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
                 metadataDate = date.toISOString().split('T')[0]; // YYYY-MM-DD形式
                 console.log('Metadata date will be added:', metadataDate);
             }
+            
+            // チャンネルメタデータの生成（追加）
+            if (jsonData.channelId) {
+                metadataNetwork = jsonData.channelId;
+                console.log('Metadata network will be added:', metadataNetwork);
+            }
+            
 	    // ジャンルメタデータの生成
 	    const genres = [];
 	    console.log('Genre data from JSON:', {
@@ -1148,9 +1156,12 @@ function determineAudioLanguages(audioStreams, fileName) {
     if (metadataDate) {
         metadataArgs.push('-metadata', `date=${metadataDate}`);
     }
+    if (metadataNetwork) {  
+        metadataArgs.push('-metadata', `network=${metadataNetwork}`);
+    }
     if (metadataGenre) {
         metadataArgs.push('-metadata', `genre=${metadataGenre}`);
-    }
+    }    
 
     // FFmpeg引数の組み立て
     let outputArgs;
@@ -1235,8 +1246,9 @@ function determineAudioLanguages(audioStreams, fileName) {
             averageSpeed: duration > 0 ? Math.floor(duration / elapsed) + 'x' : 'N/A',
             useCodec, cutSecond,
             tsreadexUsed: shouldDeleteTemp,
-            subtitlesIncluded: hasValidSubtitles, // 字幕情報をログに追加
+            subtitlesIncluded: hasValidSubtitles,
             metadataIncluded: metadataArgs.length > 0,
+            metadataNetwork: metadataNetwork,  
             audioCodec: audioCodec,
             ignoreTags: ignoreTags
         };
@@ -1281,4 +1293,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/22
+// Time stamp: 2026/06/23

@@ -240,12 +240,14 @@ trim() {
     date=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
     description=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
     genre=$(ffprobe -v error -show_entries format_tags=genre -of default=nw=1:nk=1 "$INPUT")
+    network=$(ffprobe -v error -show_entries format_tags=network -of default=nw=1:nk=1 "$INPUT")
     
     METADATA_OPT=()
     METADATA_OPT+=(-metadata title="$title")
     METADATA_OPT+=(-metadata date="$date")
     METADATA_OPT+=(-metadata description="$description")
     METADATA_OPT+=(-metadata genre="$genre")
+    METADATA_OPT+=(-metadata network="$network")
 
     # 字幕があり、言語タグが取得できていれば設定（なければ jpn を強制しても良い）
     if [[ -n "$SUB_LANG" ]]; then
@@ -484,7 +486,8 @@ make_tvshow_nfo() {
     local folder="$1"
     local file="$2"
 
-    local genres
+    local genres network
+    # genreの取得
     genres=$(
         ffprobe -v quiet \
             -show_entries format_tags=genre \
@@ -492,17 +495,33 @@ make_tvshow_nfo() {
             "$file" |
         sed 's/ \/ /\n/g'
     )
+    # network（放送局）の取得を追加
+    network=$(
+        ffprobe -v quiet \
+            -show_entries format_tags=network \
+            -of default=noprint_wrappers=1:nokey=1 \
+            "$file"
+    )
 
-    [ -z "$genres" ] && return
+    # genre と network のどちらも空なら処理をスキップ
+    [ -z "$genres" ] && [ -z "$network" ] && return
 
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
         echo '<tvshow>'
         echo "  <title>${folder}</title>"
 
-        while IFS= read -r genre; do
-            echo "  <genre>${genre}</genre>"
-        done <<< "$genres"
+        # network が存在すれば出力
+        if [ -n "$network" ]; then
+            echo "  <studio>${network}</studio>"
+        fi
+
+        # genre を一行ずつ出力
+        if [ -n "$genres" ]; then
+            while IFS= read -r genre; do
+                echo "  <genre>${genre}</genre>"
+            done <<< "$genres"
+        fi
 
         echo '</tvshow>'
     } > tvshow.nfo
@@ -521,8 +540,17 @@ merge_tvshow_nfo() {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
         echo '<tvshow>'
 
+        # タイトルは既存のdstを維持
         grep '<title>' "$dst"
 
+        # networkをマージ（重複排除）
+        {
+            grep '<studio>' "$dst"
+            grep '<studio>' "$src"
+        } |
+        sort -u
+
+        # genreをマージ（重複排除）
         {
             grep '<genre>' "$dst"
             grep '<genre>' "$src"
