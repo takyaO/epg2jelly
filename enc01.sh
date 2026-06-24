@@ -617,16 +617,28 @@ merge_tvshow_nfo() {
 		fi
 
 		if ! grep -q "映画" tvshow.nfo; then
-		    folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用		    
-		    make_tvshow_nfo "$folder" "$FILENAME.mp4"
+                    folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
+                    make_tvshow_nfo "$folder" "$FILENAME.mp4"
 
-		    dst="$OUTDIR/$folder/tvshow.nfo"
-		    if [ -f "$dst" ]; then
-			merge_tvshow_nfo tvshow.nfo "$dst"
-		    else
-			cp tvshow.nfo "$dst"
+                    # 1. コピー先のディレクトリパスを定義
+                    dst_dir="$OUTDIR/$folder"
+                    dst="$dst_dir/tvshow.nfo"
+
+                    # 2. ディレクトリが存在しない場合は作成
+                    if [ ! -d "$dst_dir" ]; then
+                        mkdir -p "$dst_dir"
 		    fi
-		fi
+
+                    # 3. 既存のファイルをチェックしてマージまたはコピー
+                    if [ -f "$dst" ]; then
+                        merge_tvshow_nfo tvshow.nfo "$dst"
+                    else
+                        cp tvshow.nfo "$dst"
+                    fi
+                else
+                    echo "WARNING: tvshow.nfo not moved to $folder, as it conta\
+ins 映画"
+                fi
 		
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
 
