@@ -107,40 +107,12 @@ trim() {
     INDEX=0
     > "$PARTS_LIST"
 
-    # --- ストリーム判定 ---
-    if ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$INPUT" | grep -q .; then
-        HAS_SUBS=yes
-        # 字幕ストリーム(1つ目)の言語タグを取得する
-        SUB_LANG=$(ffprobe -v error -select_streams s:0 -show_entries stream_tags=language -of default=nw=1:nk=1 "$INPUT")
-    else
-        HAS_SUBS=no
-        SUB_LANG=""
-    fi
-
-    # 音声ストリーム数
+    # 音声ストリーム数の取得（メタデータ処理用）
     AUDIO_COUNT=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$INPUT" | wc -l | tr -d ' ')
-
-    STREAM_OPT=()
-    CODEC_OPT=()
-
-    if [[ "$HAS_SUBS" == "yes" || "$AUDIO_COUNT" -gt 1 ]]; then
-        STREAM_OPT+=(-map 0 -copy_unknown)
-    fi
-
-    if [[ "$HAS_SUBS" == "yes" ]]; then
-        # 【デバッグ変更点】字幕エンコード時に、タイムスタンプをパーツの開始位置(0秒ベース)にリセットするフィルタを適用
-        CODEC_OPT+=(-c:s mov_text -filter:s "setpts=PTS-START_PTS")
-    fi
-
-    if [[ "$AUDIO_COUNT" -gt 0 ]]; then
-        for ((i=0; i<"$AUDIO_COUNT"; i++)); do
-            CODEC_OPT+=(-c:a:"$i" "$audio_codec" -b:a:"$i" 192k)
-        done
-    fi
 
     # chap_out.txt から SCPos のみを抽出（昇順）
     mapfile -t SC_FRAMES < <(
-	grep 'SCPos:' "$CHAPFILE" \
+        grep 'SCPos:' "$CHAPFILE" \
             | grep -v '^[[:space:]]*#' \
             | grep -o 'SCPos:[0-9]\+' \
             | sed 's/SCPos://' \
@@ -152,10 +124,10 @@ trim() {
     OUT_OFFSET=0
     CHAP_INDEX=0
     LAST_START_MS=-1
-    THRESHOLD_MS=20000   # 
+    THRESHOLD_MS=20000
 
     while read -r line; do
-	while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
+        while [[ "$line" =~ Trim\(([0-9]+),([0-9]+)\) ]]; do
             STARTF="${BASH_REMATCH[1]}"
             ENDF="${BASH_REMATCH[2]}"
 
@@ -169,73 +141,77 @@ trim() {
 
             CHAP_INDEX=$((CHAP_INDEX+1))
             {
-		echo "[CHAPTER]"
-		echo "TIMEBASE=1/1000"
-		echo "START=$START_MS"
-		echo "title=Chapter $CHAP_INDEX"
+                echo "[CHAPTER]"
+                echo "TIMEBASE=1/1000"
+                echo "START=$START_MS"
+                echo "title=Chapter $CHAP_INDEX"
             } >> "$CHAP_META"
 
             LAST_START_MS="$START_MS"
 
             # --- SCPos によるチャプター ---
             for SCF in "${SC_FRAMES[@]}"; do
-        # Trim区間外は無視
-        if (( SCF < STARTF || SCF >= ENDF )); then
+                if (( SCF < STARTF || SCF >= ENDF )); then
                     continue
-        fi
+                fi
 
-        OUTSEC=$(bc_calc "$OUT_OFFSET + ($SCF - $STARTF) / $FPS")
-        START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
+                OUTSEC=$(bc_calc "$OUT_OFFSET + ($SCF - $STARTF) / $FPS")
+                START_MS=$(printf "%.0f" "$(bc_calc "$OUTSEC * 1000")")
 
-        DIFF=$((START_MS - LAST_START_MS))
-        [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
+                DIFF=$((START_MS - LAST_START_MS))
+                [ "$DIFF" -lt 0 ] && DIFF=$((-DIFF))
 
-        # 近すぎるチャプターは抑止
-        if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
-            continue
-        fi
+                if [ "$DIFF" -le "$THRESHOLD_MS" ]; then
+                    continue
+                fi
 
-        CHAP_INDEX=$((CHAP_INDEX+1))
-        {
+                CHAP_INDEX=$((CHAP_INDEX+1))
+                {
                     echo "[CHAPTER]"
                     echo "TIMEBASE=1/1000"
                     echo "START=$START_MS"
                     echo "title=Chapter $CHAP_INDEX"
-        } >> "$CHAP_META"
+                } >> "$CHAP_META"
 
-        LAST_START_MS="$START_MS"
+                LAST_START_MS="$START_MS"
             done
 
-            # --- 出力時間を進める ---
             OUT_OFFSET=$(bc_calc "$OUT_OFFSET + $DURATION")
 
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
-        # 【デバッグ変更点】
-        # 1. -max_interleave_delta 0 を追加（高負荷時やCM跨ぎでの字幕の数十秒遅延を防止）
-        # 2. -fix_sub_duration を追加（字幕の表示期間のバグを補正）
+	    # 字幕のずれを気にしないならこちら
+#            nice -n 19 ionice -c 3 ffmpeg -hide_banner -loglevel error -y \
+#                -ss "$STARTSEC" \
+#                -i "$INPUT" \
+#                -t "$DURATION" \
+#                -map 0:v -map 0:a \
+#                -c copy \
+#                -avoid_negative_ts make_zero \
+#                "$PART"
             nice -n 19 ionice -c 3 ffmpeg \
-		 -fix_sub_duration \
-		 -ss "$STARTSEC" \
-		 -i "$INPUT" \
-		 -t "$DURATION" \
-		 "${FFMPEG_OPTS[@]}" \
-		 -map_metadata 0 \
-		 -avoid_negative_ts make_zero \
-		 -fflags +genpts \
-		 -max_interleave_delta 0 \
-		 "${CODEC_OPT[@]}" \
-		 "${STREAM_OPT[@]}" \
-		 "$PART"
-
+                 -fix_sub_duration \
+                 -ss "$STARTSEC" \
+                 -i "$INPUT" \
+                 -t "$DURATION" \
+                 "${FFMPEG_OPTS[@]}" \
+                 -map_metadata 0 \
+                 -avoid_negative_ts make_zero \
+                 -fflags +genpts \
+                 -max_interleave_delta 0 \
+                 "${CODEC_OPT[@]}" \
+                 "${STREAM_OPT[@]}" \
+                 "$PART"
+	    
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
         
             line=${line#*"Trim("}
-    done
+        done
     done < "$TRIMFILE"
 
+    # --- メタデータの取得・設定 ---
     title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$INPUT")
     date=$(ffprobe -v error -show_entries format_tags=date -of default=nw=1:nk=1 "$INPUT")
     description=$(ffprobe -v error -show_entries format_tags=description -of default=nw=1:nk=1 "$INPUT")
@@ -249,34 +225,17 @@ trim() {
     METADATA_OPT+=(-metadata genre="$genre")
     METADATA_OPT+=(-metadata network="$network")
 
-    # 字幕があり、言語タグが取得できていれば設定（なければ jpn を強制しても良い）
-    if [[ -n "$SUB_LANG" ]]; then
-        METADATA_OPT+=(-metadata:s:s:0 language="$SUB_LANG")
-    fi
-
     # 全音声ストリームのメタデータを取得・設定
     for ((i=0; i<AUDIO_COUNT; i++)); do
-        # 言語タグを取得
-        AUDIO_LANG=$(ffprobe -v error \
-			     -select_streams a:$i \
-			     -show_entries stream_tags=language \
-			     -of default=nw=1:nk=1 "$INPUT")
-        
-        # フォールバック（取得できなければ jpn）
+        AUDIO_LANG=$(ffprobe -v error -select_streams a:$i -show_entries stream_tags=language -of default=nw=1:nk=1 "$INPUT")
         [[ -z "$AUDIO_LANG" ]] && AUDIO_LANG=jpn
         METADATA_OPT+=(-metadata:s:a:$i language="$AUDIO_LANG")
         
-        # タイトル/ラベル（handler_name）を取得 - "AAC - Stream"の代わりに元のラベルを保持
-        AUDIO_TITLE=$(ffprobe -v error \
-			      -select_streams a:$i \
-			      -show_entries stream_tags=title \
-			      -of default=nw=1:nk=1 "$INPUT")
-        
+        AUDIO_TITLE=$(ffprobe -v error -select_streams a:$i -show_entries stream_tags=title -of default=nw=1:nk=1 "$INPUT")
         if [[ -n "$AUDIO_TITLE" ]]; then
             METADATA_OPT+=(-metadata:s:a:$i title="$AUDIO_TITLE")
         fi
         
-        # Disposition（デフォルト設定）- 第1ストリームをデフォルトに、他は通常設定
         if [[ $i -eq 0 ]]; then
             METADATA_OPT+=(-disposition:a:$i default)
         else
@@ -284,18 +243,147 @@ trim() {
         fi
     done
     
-    # 【デバッグ変更点】結合時にも念のため -max_interleave_delta 0 を付与
+    # 字幕を含めず、映像と音声のパーツを高速結合
     ffmpeg -hide_banner -loglevel error -y \
-           -f concat -safe 0 -i "$PARTS_LIST" \
-           -i "$CHAP_META" \
-           -c copy -map 0 \
-           -map_metadata -1 \
-           -max_interleave_delta 0 \
-           "${METADATA_OPT[@]}" \
-           "$OUTPUT"
+        -f concat -safe 0 -i "$PARTS_LIST" \
+        -i "$CHAP_META" \
+        -map 0:v -map 0:a \
+        -c copy \
+        -map_metadata -1 \
+        "${METADATA_OPT[@]}" \
+        "$OUTPUT"
 
     rm -rf "$TEMPDIR"
     echo "Done: $OUTPUT"
+}
+
+extract_vtt_sub() {
+    if [ "$#" -ne 2 ]; then
+        echo "Error: extract_vtt_sub expects 2 arguments: INPUT_MP4 OUTPUT_VTT" >&2
+        return 1
+    fi
+    local INPUT="$1"
+    local OUTPUT_VTT="$2"
+    local TRIMFILE="jls_out.txt"
+
+    # 字幕ストリームが存在するかチェック
+    if ! ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$INPUT" | grep -q .; then
+        echo "字幕ストリームが存在しないため、VTTの抽出をスキップします。"
+        return 0
+    fi
+
+    echo "字幕ストリームを検出し、Trim情報に基づきVTTを生成します..."
+    local TEMPDIR=$(mktemp -d)
+    local RAW_VTT="$TEMPDIR/raw_all.vtt"
+
+    # CMカット前の元動画から、すべての字幕を一旦VTTとして丸ごと抽出
+    ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -map 0:s:0 "$RAW_VTT"
+
+    # Python3を使って、Trim情報を元にVTTのタイムスタンプを再計算（カット・前詰め）
+    python3 - "$RAW_VTT" "$TRIMFILE" "$OUTPUT_VTT" << 'EOF'
+import sys
+import re
+
+raw_vtt_path = sys.argv[1]
+trim_path = sys.argv[2]
+out_vtt_path = sys.argv[3]
+fps = 29.97
+
+# 1. Trim情報を読み込んで時間（秒）に変換
+trims = []
+try:
+    with open(trim_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+        matches = re.findall(r'Trim\((\d+),\s*(\d+)\)', content)
+        for m in matches:
+            start_f, end_f = int(m[0]), int(m[1])
+            trims.append({
+                'start': start_f / fps,
+                'end': end_f / fps,
+                'duration': (end_f - start_f) / fps
+            })
+except FileNotFoundError:
+    print(f"Error: Trim file {trim_path} not found.")
+    sys.exit(1)
+
+# 時間文字列(00:00:00.000)を秒(float)に変換する関数
+def parse_time(t_str):
+    parts = t_str.strip().split(':')
+    sec_milli = parts[-1].split('.')
+    s = float(sec_milli[0]) + (float(sec_milli[1]) / 1000.0 if len(sec_milli) > 1 else 0)
+    m = int(parts[-2])
+    h = int(parts[-3]) if len(parts) > 2 else 0
+    return h * 3600 + m * 60 + s
+
+# 秒(float)をVTT形式(HH:MM:SS.mmm)に変換する関数
+def format_time(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+# 2. VTTを読み込んで解析・処理
+try:
+    with open(raw_vtt_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+except FileNotFoundError:
+    print(f"Error: Raw VTT {raw_vtt_path} not found.")
+    sys.exit(1)
+
+out_lines = ["WEBVTT\n\n"]
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if '-->' in line:
+        times = line.split('-->')
+        start_t = parse_time(times[0])
+        end_t = parse_time(times[1])
+        
+        # テキストブロックを読み取る
+        text_lines = []
+        i += 1
+        while i < len(lines) and lines[i].strip() != '':
+            text_lines.append(lines[i])
+            i += 1
+            
+        # どのTrim区間に入るかを計算
+        mapped_start = None
+        mapped_end = None
+        accumulated_offset = 0
+        
+        for trim in trims:
+            if end_t <= trim['start']:
+                # この区間より前の字幕（カット対象）
+                pass
+            elif start_t >= trim['end']:
+                # この区間より後の字幕（次の区間を探すためオフセットを加算）
+                accumulated_offset += trim['duration']
+            else:
+                # この区間に含まれる（あるいは一部重なる）字幕
+                eff_start = max(start_t, trim['start'])
+                eff_end = min(end_t, trim['end'])
+                
+                if eff_end > eff_start:
+                    mapped_start = accumulated_offset + (eff_start - trim['start'])
+                    mapped_end = accumulated_offset + (eff_end - trim['start'])
+                break # 1つの字幕がCMを跨ぐことは想定しないためBreak
+                
+        # カット対象でなく、正しくマッピングされた場合のみ書き出し
+        if mapped_start is not None and mapped_end is not None:
+            out_lines.append(f"{format_time(mapped_start)} --> {format_time(mapped_end)}\n")
+            out_lines.extend(text_lines)
+            out_lines.append("\n")
+    else:
+        i += 1
+
+# 3. 新しいVTTを保存
+with open(out_vtt_path, 'w', encoding='utf-8') as f:
+    f.writelines(out_lines)
+
+EOF
+
+    rm -rf "$TEMPDIR"
+    echo "字幕のVTT出力が完了しました: $OUTPUT_VTT"
 }
 
 jls() {
@@ -588,8 +676,21 @@ merge_tvshow_nfo() {
 		    if [ $? -eq 0 ]; then
 			trim "$FILENAME.mp4" temp$$.mp4
 			if [ -s "temp$$.mp4" ]; then
-			    rm "$FILENAME.mp4"
-			    mv temp$$.mp4 "$FILENAME.mp4"
+			    if ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$FILENAME.mp4" | grep -q .; then
+				echo "字幕ストリームを検出しました。VTTファイルを生成します。"
+			    
+				extract_vtt_sub "$FILENAME.mp4" "temp$$.vtt"
+			    
+				rm "$FILENAME.mp4"
+				mv temp$$.mp4 "$FILENAME.mp4"
+
+				mv "temp$$.vtt" "${FILENAME%.mp4}.ja.vtt"
+			    else
+				echo "字幕ストリームはありません。動画の置き換えのみ実行します。"
+
+				rm "$FILENAME.mp4"
+				mv "temp$$.mp4" "$FILENAME.mp4"
+			    fi			    
 			else
 			    echo "Error: trim failed" >&2
 			    notify 3 "ERROR: trim failed: $FILENAME"
@@ -636,12 +737,13 @@ merge_tvshow_nfo() {
                         cp tvshow.nfo "$dst"
                     fi
                 else
-                    echo "WARNING: tvshow.nfo not moved to $folder, as it conta\
-ins 映画"
+                    echo "WARNING: tvshow.nfo not moved as it contains 映画"
                 fi
 		
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
-
+		if [ -f "$FILENAME.ja.vtt" ]; then
+		    ./mvjf.sh "$FILENAME.ja.vtt" "$OUTDIR"
+		fi		    
 		notify 2 "mp4 created: $FILENAME"
             else
 		echo "ERROR: mp4 not created" >&2

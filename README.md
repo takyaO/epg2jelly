@@ -61,7 +61,7 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 [第5回：CMカット。ロゴファイル作成](https://note.com/leal_walrus5520/n/ndc191af72c04)
 
-市民的自由
+市民的自由（著作物の私的使用）
 
 [第6回：作業フォルダ、メディアフォルダ。Jellyfin インストール](https://note.com/leal_walrus5520/n/n98e738cae3b4)
 
@@ -69,7 +69,7 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 [第7回：処理済み判定、番組名でフォルダ整理](https://note.com/leal_walrus5520/n/n8ae31f665314)
 
-随時更新中
+メディアサーバーでのファイル管理対策
 
 [第8回：空き時間に編集自動化](https://note.com/leal_walrus5520/n/nd83ae9364893)
 
@@ -137,9 +137,24 @@ Jellyfinおすすめ設定
 
 [第24回：MP4にメタデータを埋め込む](https://note.com/leal_walrus5520/n/nb560315013e3)
 
-放送波中の番組名、放送日、概要、ジャンルを保存
+放送波中の諸情報を有効利用
 
 [第25回：サーバー分離](https://note.com/leal_walrus5520/n/n2df9b408649f)
 
 録画サーバーとメディアサーバーを物理的に分ける
 
+[第26回：録画 予約 支援アプリ](https://note.com/leal_walrus5520/n/ncaf1feb3808c)
+
+スマホから録画予約管理
+
+[第27回：自動字幕生成: AI連携](https://note.com/leal_walrus5520/n/n5309adb7ef00)
+
+OpenAI Whisperを使ってみる
+
+[第28回：Jellyfinサーバーアップデート](https://note.com/leal_walrus5520/n/nc6592d16ff7c)
+
+アプデに備えて
+
+[第29回：マルチチャンネル対応](https://note.com/leal_walrus5520/n/n2d01e784a813)
+
+バグ対策
