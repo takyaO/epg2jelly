@@ -2,7 +2,9 @@
 IFS=$'\n\t'
 
 #ffmpeg のオプション
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
+#FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv )
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -vf 'hwdownload,format=nv12' )
 #FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
 FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset medium )
@@ -109,6 +111,12 @@ trim() {
 
     # 音声ストリーム数の取得（メタデータ処理用）
     AUDIO_COUNT=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$INPUT" | wc -l | tr -d ' ')
+    CODEC_OPT=()
+    if [[ "$AUDIO_COUNT" -gt 0 ]]; then
+        for ((i=0; i<"$AUDIO_COUNT"; i++)); do
+            CODEC_OPT+=(-c:a:"$i" "$audio_codec" -b:a:"$i" 192k)
+        done
+    fi
 
     # chap_out.txt から SCPos のみを抽出（昇順）
     mapfile -t SC_FRAMES < <(
@@ -190,20 +198,24 @@ trim() {
 #                -c copy \
 #                -avoid_negative_ts make_zero \
 #                "$PART"
-            nice -n 19 ionice -c 3 ffmpeg \
-                 -fix_sub_duration \
-                 -ss "$STARTSEC" \
-                 -i "$INPUT" \
-                 -t "$DURATION" \
-                 "${FFMPEG_OPTS[@]}" \
-                 -map_metadata 0 \
-                 -avoid_negative_ts make_zero \
-                 -fflags +genpts \
-                 -max_interleave_delta 0 \
-                 "${CODEC_OPT[@]}" \
-                 "${STREAM_OPT[@]}" \
-                 "$PART"
-	    
+
+#	        ffmpeg "${STREAM_OPT_PRE[@]}" -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" "$PART"
+	    nice -n 19 ionice -c 3 ffmpeg "${FFMPEG_OPTS_PRE[@]}" \
+		 -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${CODEC_OPT[@]}" "$PART"
+
+#            nice -n 19 ionice -c 3 ffmpeg \
+#                 -ss "$STARTSEC" \
+#                 -i "$INPUT" \
+#                 -t "$DURATION" \
+#                 "${FFMPEG_OPTS[@]}" \
+#                 -map_metadata 0 \
+#                 -avoid_negative_ts make_zero \
+#                 -fflags +genpts \
+#                 -max_interleave_delta 0 \
+#                 "${CODEC_OPT[@]}" \
+#                 "${STREAM_OPT[@]}" \
+#                 "$PART"
+#	    
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
         
