@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 IFS=$'\n\t'
 
-#ffmpeg のオプション
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
-#FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv )
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -vf 'hwdownload,format=nv12' )
-#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12 )
-FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset fast )
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset medium )
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow )
+#ユーザー定義のオプションを設定
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
+#FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv ) #音声と映像がずれるので却下
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow ) 
+# 未定義ならば
+if [ ${#FFMPEG_OPTS[@]} -eq 0 ]; then
+    # ffmpegのエンコーダ一覧を取得し、h264_qsvが含まれているかチェック
+    if ffmpeg -hide_banner -encoders 2>/dev/null | grep -qw "h264_qsv"; then
+        # h264_qsv が使用可能な場合
+        FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow)
+    else
+        # h264_qsv が使用不可な場合（ソフトウェアエンコードにフォールバック）
+        FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset slow)
+    fi
+fi
+
+echo "使用するオプション: ${FFMPEG_OPTS[*]}"
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -189,7 +198,7 @@ trim() {
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
-	    # 字幕のずれを気にしないならこちら
+	    # 字幕のずれを気にしないなら
 #            nice -n 19 ionice -c 3 ffmpeg -hide_banner -loglevel error -y \
 #                -ss "$STARTSEC" \
 #                -i "$INPUT" \
@@ -199,23 +208,9 @@ trim() {
 #                -avoid_negative_ts make_zero \
 #                "$PART"
 
-#	        ffmpeg "${STREAM_OPT_PRE[@]}" -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${CODEC_OPT[@]}" "${STREAM_OPT[@]}" "$PART"
 	    nice -n 19 ionice -c 3 ffmpeg "${FFMPEG_OPTS_PRE[@]}" \
 		 -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${CODEC_OPT[@]}" "$PART"
 
-#            nice -n 19 ionice -c 3 ffmpeg \
-#                 -ss "$STARTSEC" \
-#                 -i "$INPUT" \
-#                 -t "$DURATION" \
-#                 "${FFMPEG_OPTS[@]}" \
-#                 -map_metadata 0 \
-#                 -avoid_negative_ts make_zero \
-#                 -fflags +genpts \
-#                 -max_interleave_delta 0 \
-#                 "${CODEC_OPT[@]}" \
-#                 "${STREAM_OPT[@]}" \
-#                 "$PART"
-#	    
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
         
@@ -291,7 +286,7 @@ extract_vtt_sub() {
     # CMカット前の元動画から、すべての字幕を一旦VTTとして丸ごと抽出
     ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -map 0:s:0 "$RAW_VTT"
 
-    # Python3を使って、Trim情報を元にVTTのタイムスタンプを再計算（カット・前詰め）
+    # Python3を使って、Trim情報を元にVTTのタイムスタンプを再計算（カット・前詰め）: スクリプトとして独立させるべき？
     python3 - "$RAW_VTT" "$TRIMFILE" "$OUTPUT_VTT" << 'EOF'
 import sys
 import re
