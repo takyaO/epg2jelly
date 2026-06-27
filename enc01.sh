@@ -4,20 +4,27 @@ IFS=$'\n\t'
 #ユーザー定義のオプションを設定
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
 #FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv ) #音声と映像がずれるので却下
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow ) 
+
 # 未定義ならば
 if [ ${#FFMPEG_OPTS[@]} -eq 0 ]; then
-    # ffmpegのエンコーダ一覧を取得し、h264_qsvが含まれているかチェック
-    if ffmpeg -hide_banner -encoders 2>/dev/null | grep -qw "h264_qsv"; then
-        # h264_qsv が使用可能な場合
-        FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow)
+    # 利用可能なエンコーダ一覧を一時的に変数に格納
+    AVAILABLE_ENCODERS=$(ffmpeg -hide_banner -encoders 2>/dev/null)
+
+    if echo "$AVAILABLE_ENCODERS" | grep -qw "h264_qsv"; then
+        # 1. h264_qsv が使用可能な場合 (Intel)
+        FFMPEG_OPTS=(-c:v h264_qsv -global_quality 23 -preset medium)
+#        FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow)
+
+    elif echo "$AVAILABLE_ENCODERS" | grep -qw "h264_amf"; then
+        # 2. h264_amf が使用可能な場合 (AMD)
+        FFMPEG_OPTS=(-c:v h264_amf -rc cqp -qp 23 -quality balanced)
+#        FFMPEG_OPTS=(-c:v h264_amf -rc cqp -qp 21 -quality slow)
     else
-        # h264_qsv が使用不可な場合（ソフトウェアエンコードにフォールバック）
-        FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset slow)
+        # 3. どちらも不可な場合（CPUによるソフトウェアエンコード）
+        FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset medium)
+#        FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset slow)
     fi
 fi
-
-echo "使用するオプション: ${FFMPEG_OPTS[*]}"
 
 # libfdk_aacの利用可否をチェック
 if ffmpeg -encoders 2>/dev/null | grep -q "libfdk_aac"; then
@@ -250,7 +257,7 @@ trim() {
         fi
     done
     
-    # 字幕を含めず、映像と音声のパーツを高速結合
+    # 字幕を含めず、映像と音声を結合
     ffmpeg -hide_banner -loglevel error -y \
         -f concat -safe 0 -i "$PARTS_LIST" \
         -i "$CHAP_META" \
@@ -262,6 +269,132 @@ trim() {
 
     rm -rf "$TEMPDIR"
     echo "Done: $OUTPUT"
+}
+
+extract_ass_sub() {
+    if [ "$#" -ne 2 ]; then
+        echo "Error: extract_ass_sub expects 2 arguments: INPUT_MP4 OUTPUT_ASS" >&2
+        return 1
+    fi
+    local INPUT="$1"
+    local OUTPUT_ASS="$2"
+    local TRIMFILE="jls_out.txt"
+
+    # 字幕ストリームが存在するかチェック
+    if ! ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$INPUT" | grep -q .; then
+        echo "字幕ストリームが存在しないため、ASSの抽出をスキップします。"
+        return 0
+    fi
+
+    echo "字幕を検出し、Trim情報に基づきASS（カラー保持）を生成します..."
+    local TEMPDIR=$(mktemp -d)
+    local RAW_ASS="$TEMPDIR/raw_all.ass"
+
+    # 色情報を完全保持するASSとして丸ごと抽出
+    ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -map 0:s:0 "$RAW_ASS"
+
+    # Python3を使って、Trim情報を元にASSのタイムスタンプを再計算
+    python3 - "$RAW_ASS" "$TRIMFILE" "$OUTPUT_ASS" << 'EOF'
+import sys
+import re
+
+raw_ass_path = sys.argv[1]
+trim_path = sys.argv[2]
+out_ass_path = sys.argv[3]
+fps = 29.97
+
+# 1. Trim情報を読み込んで時間（秒）に変換
+trims = []
+try:
+    with open(trim_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+        matches = re.findall(r'Trim\((\d+),\s*(\d+)\)', content)
+        for m in matches:
+            start_f, end_f = int(m[0]), int(m[1])
+            trims.append({
+                'start': start_f / fps,
+                'end': end_f / fps,
+                'duration': (end_f - start_f) / fps
+            })
+except FileNotFoundError:
+    print(f"Error: Trim file {trim_path} not found.")
+    sys.exit(1)
+
+def parse_time(t_str):
+    # ASSの時間は H:MM:SS.cs (センチ秒)
+    h, m, s = t_str.strip().split(':')
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+def format_time(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    # ASSのフォーマット要件 (0:00:00.00) に合わせる
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+out_lines = []
+
+# 2. ASSを1行ずつ読み込んで処理（ASSは1セリフ1行なので処理がシンプル）
+try:
+    with open(raw_ass_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('Dialogue:'):
+                # Format: Dialogue: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+                parts = line.split(',', 9)
+                if len(parts) >= 10:
+                    start_t = parse_time(parts[1])
+                    end_t = parse_time(parts[2])
+                    
+                    mapped_start = None
+                    mapped_end = None
+                    accumulated_offset = 0
+                    
+                    for trim in trims:
+                        if end_t <= trim['start']:
+                            pass
+                        elif start_t >= trim['end']:
+                            accumulated_offset += trim['duration']
+                        else:
+                            eff_start = max(start_t, trim['start'])
+                            eff_end = min(end_t, trim['end'])
+                            if eff_end > eff_start:
+                                mapped_start = accumulated_offset + (eff_start - trim['start'])
+                                mapped_end = accumulated_offset + (eff_end - trim['start'])
+                            break
+                            
+                    # 該当区間ならタイムスタンプを書き換えて保存
+                    if mapped_start is not None and mapped_end is not None:
+                        parts[1] = format_time(mapped_start)
+                        parts[2] = format_time(mapped_end)
+                        out_lines.append(','.join(parts))
+            else:
+                # [V4+ Styles] セクションの Format 行と Style 行をターゲットにする
+                if line.startswith('Style:'):
+                    # ASSのStyle行のカンマ区切りパラメータを分解
+                    # Format: Name, Fontname, Fontsize, PrimaryColour, ...
+                    style_parts = line.split(',')
+                    if len(style_parts) > 3:
+                        # 1. フォント名をブラウザやOSを問わない汎用フォントに強制変更
+                        style_parts[1] = 'sans-serif'
+                        # 2. デフォルトのフォントサイズを適正サイズに調整
+                        style_parts[2] = '18' 
+                        
+                        line = ','.join(style_parts)
+                
+                # ダイアログ（セリフ）行以外のヘッダーは、上記の置換を経てそのままコピー
+                out_lines.append(line)
+except FileNotFoundError:
+    print(f"Error: Raw ASS {raw_ass_path} not found.")
+    sys.exit(1)
+
+# 3. 新しいASSを保存
+with open(out_ass_path, 'w', encoding='utf-8') as f:
+    f.writelines(out_lines)
+
+EOF
+
+    rm -rf "$TEMPDIR"
+    echo "字幕のASS出力が完了しました: $OUTPUT_ASS"
 }
 
 extract_vtt_sub() {
@@ -286,7 +419,7 @@ extract_vtt_sub() {
     # CMカット前の元動画から、すべての字幕を一旦VTTとして丸ごと抽出
     ffmpeg -hide_banner -loglevel error -y -i "$INPUT" -map 0:s:0 "$RAW_VTT"
 
-    # Python3を使って、Trim情報を元にVTTのタイムスタンプを再計算（カット・前詰め）: スクリプトとして独立させるべき？
+    # Python3を使って、Trim情報を元にVTTのタイムスタンプを再計算
     python3 - "$RAW_VTT" "$TRIMFILE" "$OUTPUT_VTT" << 'EOF'
 import sys
 import re
@@ -313,7 +446,6 @@ except FileNotFoundError:
     print(f"Error: Trim file {trim_path} not found.")
     sys.exit(1)
 
-# 時間文字列(00:00:00.000)を秒(float)に変換する関数
 def parse_time(t_str):
     parts = t_str.strip().split(':')
     sec_milli = parts[-1].split('.')
@@ -322,7 +454,6 @@ def parse_time(t_str):
     h = int(parts[-3]) if len(parts) > 2 else 0
     return h * 3600 + m * 60 + s
 
-# 秒(float)をVTT形式(HH:MM:SS.mmm)に変換する関数
 def format_time(seconds):
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
@@ -337,8 +468,15 @@ except FileNotFoundError:
     print(f"Error: Raw VTT {raw_vtt_path} not found.")
     sys.exit(1)
 
-out_lines = ["WEBVTT\n\n"]
+out_lines = []
 i = 0
+
+# 最初のタイムスタンプ(-->)が出現するまでの行（STYLEタグやメタデータ）をすべて保持
+while i < len(lines) and '-->' not in lines[i]:
+    out_lines.append(lines[i])
+    i += 1
+
+# --- タイムスタンプ行以降の処理 ---
 while i < len(lines):
     line = lines[i]
     if '-->' in line:
@@ -346,10 +484,10 @@ while i < len(lines):
         start_t = parse_time(times[0])
         end_t = parse_time(times[1])
         
-        # テキストブロックを読み取る
+        # テキストブロック（インラインタグ含む）を読み取る
         text_lines = []
         i += 1
-        while i < len(lines) and lines[i].strip() != '':
+        while i < len(lines) and lines[i].strip() != '' and '-->' not in lines[i]:
             text_lines.append(lines[i])
             i += 1
             
@@ -360,27 +498,25 @@ while i < len(lines):
         
         for trim in trims:
             if end_t <= trim['start']:
-                # この区間より前の字幕（カット対象）
                 pass
             elif start_t >= trim['end']:
-                # この区間より後の字幕（次の区間を探すためオフセットを加算）
                 accumulated_offset += trim['duration']
             else:
-                # この区間に含まれる（あるいは一部重なる）字幕
                 eff_start = max(start_t, trim['start'])
                 eff_end = min(end_t, trim['end'])
                 
                 if eff_end > eff_start:
                     mapped_start = accumulated_offset + (eff_start - trim['start'])
                     mapped_end = accumulated_offset + (eff_end - trim['start'])
-                break # 1つの字幕がCMを跨ぐことは想定しないためBreak
+                break
                 
-        # カット対象でなく、正しくマッピングされた場合のみ書き出し
+        # 該当区間なら書き出し
         if mapped_start is not None and mapped_end is not None:
             out_lines.append(f"{format_time(mapped_start)} --> {format_time(mapped_end)}\n")
             out_lines.extend(text_lines)
             out_lines.append("\n")
     else:
+        # 空行などのスキップ
         i += 1
 
 # 3. 新しいVTTを保存
@@ -687,11 +823,13 @@ merge_tvshow_nfo() {
 				echo "字幕ストリームを検出しました。VTTファイルを生成します。"
 			    
 				extract_vtt_sub "$FILENAME.mp4" "temp$$.vtt"
-			    
+				extract_ass_sub "$FILENAME.mp4" "temp$$.ass"
+
 				rm "$FILENAME.mp4"
 				mv temp$$.mp4 "$FILENAME.mp4"
 
 				mv "temp$$.vtt" "${FILENAME%.mp4}.ja.vtt"
+				mv "temp$$.ass" "${FILENAME%.mp4}.ja.ass"
 			    else
 				echo "字幕ストリームはありません。動画の置き換えのみ実行します。"
 
@@ -750,6 +888,9 @@ merge_tvshow_nfo() {
 		./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
 		if [ -f "$FILENAME.ja.vtt" ]; then
 		    ./mvjf.sh "$FILENAME.ja.vtt" "$OUTDIR"
+		fi		    
+		if [ -f "$FILENAME.ja.ass" ]; then
+		    ./mvjf.sh "$FILENAME.ja.ass" "$OUTDIR"
 		fi		    
 		notify 2 "mp4 created: $FILENAME"
             else
