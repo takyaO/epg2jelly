@@ -2,7 +2,7 @@
 IFS=$'\n\t'
 
 #ユーザー定義のオプションを設定
-#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
+FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
 #FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv ) #音声と映像がずれるので却下
 
 # 未定義ならば
@@ -205,19 +205,13 @@ trim() {
             PART="$TEMPDIR/part_${INDEX}.mp4"
             watch_iowait
 
-	    # 字幕のずれを気にしないなら
-#            nice -n 19 ionice -c 3 ffmpeg -hide_banner -loglevel error -y \
-#                -ss "$STARTSEC" \
-#                -i "$INPUT" \
-#                -t "$DURATION" \
-#                -map 0:v -map 0:a \
-#                -c copy \
-#                -avoid_negative_ts make_zero \
-#                "$PART"
-
-	    nice -n 19 ionice -c 3 ffmpeg "${FFMPEG_OPTS_PRE[@]}" \
-		 -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" "${FFMPEG_OPTS[@]}"  "${CODEC_OPT[@]}" "$PART"
-
+            nice -n 19 ionice -c 3 ffmpeg "${FFMPEG_OPTS_PRE[@]}" \
+		 -ss "$STARTSEC" -i "$INPUT" -t "$DURATION" \
+		 -map 0:v -map 0:a \
+		 "${FFMPEG_OPTS[@]}" \
+		 "${CODEC_OPT[@]}" \
+		 "$PART"
+	
             echo "file '$PART'" >> "$PARTS_LIST"
             INDEX=$((INDEX+1))
         
