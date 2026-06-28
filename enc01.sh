@@ -2,7 +2,7 @@
 IFS=$'\n\t'
 
 #ユーザー定義のオプションを設定
-FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
 #FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv ) #音声と映像がずれるので却下
 
 # 未定義ならば
