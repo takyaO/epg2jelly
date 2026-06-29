@@ -6,13 +6,42 @@ import sys
 import curses
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 
 # ==========================================
-# 設定: 処理済みリストファイル名と録画先ディレクトリのパス
+# 設定: 処理済みリストファイル
 # ==========================================
 JSON_FILE = "processed_filenames.json"
-RECORDED_DIR = "recorded" # "$HOME/docker-mirakurun-epgstation/recorded/"
-# ==========================================
+
+# --- env.sh から SOURCEDIR を動的に読み込む処理 ---
+SCRIPT_DIR = Path(__file__).resolve().parent
+ENV_FILE = SCRIPT_DIR / "env.sh"
+SOURCEDIR = "recorded"  # デフォルト値（env.sh がない場合のフォールバック）
+if ENV_FILE.exists():
+    with open(ENV_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            # 空白を除去した先頭が '#' ならコメント行として無視
+            if line.strip().startswith('#'):
+                continue
+                
+            # 'export SOURCEDIR=...' または 'SOURCEDIR=...' の行を抽出
+            match = re.match(r'^\s*(?:export\s+)?(SOURCEDIR)\s*=\s*["\']?(.*?)["\']?\s*$', line)
+            if match:
+                _, val = match.groups()
+                
+                # 行末のインラインコメント（ # m2ts ...）があれば除去する
+                val = val.split('#')[0].strip()
+                # 前後の不要なクォーテーションを再度クリーンアップ
+                val = val.strip('"\'')
+
+                val = os.path.expandvars(val)
+                val = os.path.expanduser(val)
+                
+                if not os.path.isabs(val):
+                    SOURCEDIR = os.path.abspath(os.path.join(SCRIPT_DIR, val))
+                else:
+                    SOURCEDIR = val
+                break
 
 def load_data():
     if not os.path.exists(JSON_FILE):
@@ -150,7 +179,7 @@ def main(stdscr):
                     selected_files.add(filename)
                     
         elif key == ord('1'):
-            missing = [f for f in data if not os.path.exists(os.path.join(RECORDED_DIR, f))]
+            missing = [f for f in data if not os.path.exists(os.path.join(SOURCEDIR, f))]
             if not missing:
                 show_message(stdscr, h, w, "不在ファイルはありません (全て存在します)")
             else:
@@ -209,4 +238,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/06/27
+# Time stamp: 2026/06/29

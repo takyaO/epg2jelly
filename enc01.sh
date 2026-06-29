@@ -1,28 +1,29 @@
 #!/usr/bin/env bash
 IFS=$'\n\t'
 
-#ユーザー定義のオプションを設定
+#ユーザー定義のオプション設定
 #FFMPEG_OPTS=(-c:v h264_qsv -global_quality 22 -preset slow -tune film -rc-lookahead 60 -aq-mode 3 -deblock -1:-1 -threads 12)
+
+#高画質版
+#FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow)
+#FFMPEG_OPTS=(-c:v h264_amf -rc cqp -qp 21 -quality slow)
+#FFMPEG_OPTS=(-c:v libx264 -crf 21 -preset slow)
+
 #FFMPEG_OPTS_PRE=(-hwaccel qsv -hwaccel_output_format qsv ) #音声と映像がずれるので却下
 
-# 未定義ならば
+# 未定義ならば（画質より処理速度重視）
 if [ ${#FFMPEG_OPTS[@]} -eq 0 ]; then
-    # 利用可能なエンコーダ一覧を一時的に変数に格納
+    # 利用可能なエンコーダ一覧
     AVAILABLE_ENCODERS=$(ffmpeg -hide_banner -encoders 2>/dev/null)
-
     if echo "$AVAILABLE_ENCODERS" | grep -qw "h264_qsv"; then
         # 1. h264_qsv が使用可能な場合 (Intel)
         FFMPEG_OPTS=(-c:v h264_qsv -global_quality 23 -preset medium)
-#        FFMPEG_OPTS=(-c:v h264_qsv -global_quality 21 -preset slow)
-
     elif echo "$AVAILABLE_ENCODERS" | grep -qw "h264_amf"; then
         # 2. h264_amf が使用可能な場合 (AMD)
         FFMPEG_OPTS=(-c:v h264_amf -rc cqp -qp 23 -quality balanced)
-#        FFMPEG_OPTS=(-c:v h264_amf -rc cqp -qp 21 -quality slow)
     else
         # 3. どちらも不可な場合（CPUによるソフトウェアエンコード）
         FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset medium)
-#        FFMPEG_OPTS=(-c:v libx264 -crf 23 -preset slow)
     fi
 fi
 
@@ -814,8 +815,7 @@ merge_tvshow_nfo() {
 			trim "$FILENAME.mp4" temp$$.mp4
 			if [ -s "temp$$.mp4" ]; then
 			    if ffprobe -v error -select_streams s -show_entries stream=index -of csv=p=0 "$FILENAME.mp4" | grep -q .; then
-				echo "字幕ストリームを検出しました。VTTファイルを生成します。"
-			    
+				echo "字幕ストリームを検出しました。"
 				extract_vtt_sub "$FILENAME.mp4" "temp$$.vtt"
 				extract_ass_sub "$FILENAME.mp4" "temp$$.ass"
 
