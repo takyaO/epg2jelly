@@ -95,6 +95,7 @@ extractProgram() {
                                      -e 's/^ミニアニメ[[:space:]]*//' \
                                      -e 's/^限界アニメ[[:space:]]*//' \
                                      -e 's/^ＴＶアニメ[[:space:]]*//' \
+                                     -e 's/^TVアニメ[[:space:]]*//' \
                                      -e 's/^ドラマブレイク[[:space:]]*//' \
                                      -e 's/^ドラマ２４[[:space:]]*//' \
                                      -e 's/^.*曜ミステリー[[:space:]]*//' \
@@ -279,4 +280,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/04/09
+#Time stamp: 2026/07/03
