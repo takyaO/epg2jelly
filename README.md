@@ -30,6 +30,8 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 ```*/4 * * * * $HOME/work/encode.sh >> $HOME/work/encode.log 2>&1```
 
+**ffmpeg のオプションは enc.js (CMカットはenc01.sh)**
+
 ## 動作イメージ（ショート動画）
 
 [自家製ネットフリックス](https://youtube.com/shorts/5582veqBuvs)

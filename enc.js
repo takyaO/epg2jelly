@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（h264_qsv, h264_vaapi, libx264, h264_amf[未検証] から選択）
-// 自動判定に戻したいときは null にする
+// ffmpeg codec: null '' にすると自動判定；チェックに余計な時間がかかる
+const FORCE_CODEC = ''; // 手動で固定したい場合はここに書く（h264_qsv, h264_vaapi, libx264, h264_amf[未検証], hevc_qsv から選択）
+// ffmpeg オプションは useCodecPreArgs, useCodecPostArgs.push
+
 // モジュールの読み込み
 const { spawn } = require('child_process');
 const { execFileSync } = require('child_process');
@@ -623,32 +625,88 @@ function getVideoCodec() {
         return FORCE_CODEC;
     }
 
-    // 2. QSV (Intel環境) のチェック
+    // 2. QSV HEVC (Intel環境 H.265) のチェックを最優先に追加
+    const hasHevcQsv = checkHevcQsvAvailability();
+    if (hasHevcQsv) {
+        console.log('Using hevc_qsv video codec');
+        return 'hevc_qsv';
+    }
+
+    // 3. QSV H.264 (Intel環境) のチェック
     const hasH264Qsv = checkH264QsvAvailability();
     if (hasH264Qsv) {
         console.log('Using h264_qsv video codec');
         return 'h264_qsv';
     }
 
-    // 3. AMF (AMD環境) のチェックを追加
+    // 4. AMF (AMD環境) のチェック
     const hasH264Amf = checkH264AmfAvailability();
     if (hasH264Amf) {
         console.log('Using h264_amf video codec');
         return 'h264_amf';
     }
 
-    // 4. VA-API (Linux汎用 / Intel・AMD等) のチェック
+    // 5. VA-API (Linux汎用 / Intel・AMD等) のチェック
     const hasH264Vaapi = checkH264VaapiAvailability();
     if (hasH264Vaapi) {
         console.log('Using h264_vaapi video codec');
         return 'h264_vaapi';
     }
 
-    // 5. Fallback (ソフトウェア処理)
+    // 6. Fallback (ソフトウェア処理)
     console.log('Hardware codecs not available/not forced, using libx264');
     return 'libx264';
 }
 
+function checkHevcQsvAvailability() {
+    try {
+        // エンコーダーリストを確認
+        const encodersOptions = ['-encoders'];
+        const encodersResult = execFileSync(getEnv('FFMPEG'), encodersOptions, { encoding: 'utf8' });
+        const hasHevcQsv = encodersResult.includes('hevc_qsv') && encodersResult.includes('HEVC');
+        console.log(`hevc_qsv detection - Encoders: ${hasHevcQsv}`);
+        // ハードウェアデバイスの可用性もチェック
+        if (hasHevcQsv) {
+            try {
+                const hwaccelResult = execFileSync(getEnv('FFMPEG'), ['-hwaccels'], { encoding: 'utf8' });
+                const hasQsvHwaccel = hwaccelResult.includes('qsv');
+                console.log(`hevc_qsv hardware acceleration available: ${hasQsvHwaccel}`);
+                // ハードウェアアクセラレーションがない場合は利用不可と判断
+                if (!hasQsvHwaccel) {
+                    console.log('hevc_qsv encoder exists but no QSV hardware acceleration available');
+                    return false;
+                }
+
+                // QSVデバイスの確認（より詳細なチェック）- フレーム数制限を追加
+                try {
+                    const devicesResult = execFileSync(getEnv('FFMPEG'), [
+                        '-f', 'lavfi',
+                        '-i', 'nullsrc=size=640x480:d=0.1', // 0.1秒の短いテスト
+                        '-c:v', 'hevc_qsv',
+                        '-frames:v', '1', // 1フレームのみ
+                        '-f', 'null', '-'
+                    ], {
+                        encoding: 'utf8',
+                        stdio: ['pipe', 'pipe', 'pipe'],
+                        timeout: 10000 // 10秒タイムアウト
+                    });
+                    console.log('hevc_qsv device test passed');
+                    return true;
+                } catch (testError) {
+                    console.log('hevc_qsv device test failed:', testError.message);
+                    return false;
+                }
+            } catch (hwError) {
+                console.log('Could not verify QSV hardware acceleration, assuming hevc_qsv is not available');
+                return false;
+            }
+        }
+        return false;
+    } catch (error) {
+        console.error('Error checking hevc_qsv availability:', error.message);
+        return false;
+    }
+}
 function checkH264QsvAvailability() {
     try {
         // エンコーダーリストを確認
@@ -1086,19 +1144,34 @@ function determineAudioLanguages(audioStreams, fileName) {
 
     const useCodecPreArgs = [];
     const useCodecPostArgs = [];
+
+    // ffmpeg オプション: useCodecPreArgs, useCodecPostArgs.push
     if (useCodec === 'h264_qsv') {
         useCodecPreArgs.push('-fflags', '+genpts');
         useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
         useCodecPostArgs.push('-r', '30000/1001');
         useCodecPostArgs.push('-aspect', '16:9');
         useCodecPostArgs.push('-preset', 'slow');
-        useCodecPostArgs.push('-global_quality', '22');
+        useCodecPostArgs.push('-global_quality', '21');
         useCodecPostArgs.push('-profile:v', 'high');
         useCodecPostArgs.push('-level', '4.2');
 	//        useCodecPostArgs.push('-look_ahead', '1');
 	//        useCodecPostArgs.push('-extbrc', '1');
 	//        useCodecPostArgs.push('-b_strategy', '1');
 	//        useCodecPostArgs.push('-threads', '10');
+} else if (useCodec === 'hevc_qsv') {
+        useCodecPreArgs.push('-fflags', '+genpts');
+        useCodecPostArgs.push('-vf', 'yadif'); //cmcutで最適
+        useCodecPostArgs.push('-r', '30000/1001');
+        useCodecPostArgs.push('-aspect', '16:9');
+        useCodecPostArgs.push('-preset', 'slow');
+        // H.264の品質(21)と同等の見た目を維持する標準値。
+        // HEVCは圧縮効率が高いため、23〜25あたりがH.264の21相当
+        useCodecPostArgs.push('-global_quality', '23');
+        // 互換性・安定性重視の標準8bitプロファイル
+        useCodecPostArgs.push('-profile:v', 'main');
+        // HEVCの場合、レベル指定は自動（指定なし）に任せるのが安全で一般的
+        // （明示する場合は '-level', '4.1' や '5.1' など）
     } else if (useCodec === 'h264_amf') {
         useCodecPreArgs.push('-fflags', '+genpts');
         useCodecPostArgs.push('-vf', 'yadif'); 
@@ -1293,4 +1366,4 @@ function determineAudioLanguages(audioStreams, fileName) {
     
 })();
 // https://note.com/leal_walrus5520/n/nb560315013e3
-// Time stamp: 2026/06/23
+// Time stamp: 2026/07/04
