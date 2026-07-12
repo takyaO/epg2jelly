@@ -12,6 +12,7 @@ else
 fi
 
 # --- 設定変数 ---
+FORCEENCODE=false #強制エンコード（録画中でも）
 SCRIPT="$WORKDIR/enc01.sh" # 実行スクリプト
 LOCKFILE="/tmp/encode.lock"
 TOPROCESS="$WORKDIR/toprocess.py"
@@ -25,125 +26,157 @@ DEFERRAL_FILE="$WORKDIR/$(basename "$0").deferrals"
 MAX_DEFERRALS=100 # 最大延期回数
 #未処理バックログが貯まり続けないよう限度を設ける
 
-# --- ロックファイルチェック ---
-if [ -f "$LOCKFILE" ]; then
-    echo "Script is already running. Exiting."
-    exit 1
-fi
-touch "$LOCKFILE"
 
-# 延期回数管理
-deferral_count=$(cat "$DEFERRAL_FILE" 2>/dev/null || echo "0")
-# 最大延期回数チェック
-if [[ $deferral_count -ge $MAX_DEFERRALS ]]; then
-    echo "WARNING: Maximum Number of Deferrals Exceeded ($MAX_DEFERRALS)" >&2
-    echo "WARNING: Too many recordings to process. Complete them manually." >&2
-    if [ -v NTFY_URL ]; then
-	curl -H "X-Priority: 3" -d "WARNING: $WORKDIR/$(basename "$0")  最大延期回数($MAX_DEFERRALS)を超えました。手動で処理してください" "$NTFY_URL"
+    # --- ロックファイルチェック ---
+    if [ -f "$LOCKFILE" ]; then
+        echo "Detected $LOCKFILE"
+        exit 1
     fi
-fi
+    touch "$LOCKFILE"
 
-# --- 未処理ファイルの合計サイズ計算関数 ---
-calculate_total_size() {
-    local total_bytes=0
-    local base_dir=""
-
-    # SOURCEDIR が設定されていなければ 0 を返す（エラーを出さない）
-    if [ -n "$SOURCEDIR" ]; then
-        base_dir="$SOURCEDIR"
-    else
-        echo "0"
-        return 0
-    fi
-
-    # TOPROCESS がコマンドでなければ 0 を返す
-    if ! command -v "$TOPROCESS" >/dev/null 2>&1; then
-        echo "0"
-        return 0
-    fi
-
-    # while ループでファイル一覧を処理
-    while IFS= read -r filename; do
-        # 空行はスキップ
-        [ -z "$filename" ] && continue
-
-        file_path="$base_dir/$filename"
-
-        # ファイルがなければスキップ（警告も出さない）
-        if [ -f "$file_path" ]; then
-            size=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
-            total_bytes=$((total_bytes + size))
-        fi
-    done < <("$TOPROCESS" 2>/dev/null)
-
-    # GB単位に変換
-    local total_gb=$(awk "BEGIN {printf \"%.2f\", $total_bytes / (1024*1024*1024)}")
-
-    echo "$total_gb"
-}
-
-# --- メイン処理 ---
-if [ "$WATCHDIR" = "true" ]; then
-    # ディレクトリ監視型
-    "$SCRIPT"
-else
-    # 録画サーバー監視型
-    # 現在Unix時刻
-    timenow=$(date +'%s')
-
-    # --- Ensure stats directory and file exist ---
-    if [[ ! -f "$STATS_FILE" ]]; then
-	echo "#run_id,gbs,mins,mingb" > "$STATS_FILE"  # ヘッダをつけて初期化
-	echo "No previous stats found. Created new $STATS_FILE with initial mingb=$INITIAL_MINGB"
-    fi
-    # === Load previous mingb or initialize ===
-    # 累積データから平均を計算
-    total_gbs=$(awk -F, '{sum+=$2} END{print sum}' "$STATS_FILE")
-    total_mins=$(awk -F, '{sum+=$3} END{print sum}' "$STATS_FILE")
-    if (( $(echo "$total_gbs > 0" | bc -l) )); then
-        prev_mingb=$(echo "scale=3; $total_mins / $total_gbs" | bc -l)
-    else
-        prev_mingb=$INITIAL_MINGB
-    fi
-    mingb=$prev_mingb
+if [ "$FORCEENCODE" = "false" ]; then
     
-    # 未処理ファイルの合計サイズを計算
-    gbs=$(calculate_total_size)
-    # エンコードにかかる必要時間（分）: 有効２桁で計算
-    mins_toencode=$(echo "scale=2; $gbs*$mingb*1.1" | bc) #1割の余裕をもたせる
-    # 録画中件数
-    response=$(curl -s "${EPGSTATION_URL}/api/recording?isHalfWidth=false")
-    count=$(echo "$response" | rev | cut -c 2-2 | rev)
-    if [ "$count" = "0" ]; then
-	start_at=$(curl -s "${EPGSTATION_URL}/api/reserves?type=normal&limit=1&isHalfWidth=false" | jq -r '.reserves[0].startAt')
-	result=$(echo "scale=2; ($start_at/1000 - $timenow)/60 > $mins_toencode" | bc)
-	if [ "$result" -eq 1 ]; then
-	    # 時間が足りる場合は処理開始
-	    start_time=$(date +%s)
-	    "$SCRIPT"
-	    end_time=$(date +%s)
-	    duration=$((end_time - start_time))
-	    mins=$((duration / 60))
-
-	    # 記録を残す
-	    if (( $(echo "$gbs >= $MIN_GBS && $mins >= $MIN_MINS" | bc -l) )); then
-		run_id=$(( $(wc -l < "$STATS_FILE" 2>/dev/null || echo 0) + 1 ))
-		echo "$run_id,$gbs,$mins,$mingb" >> "$STATS_FILE"
-	    fi
-
-	    if [ -f "$DEFERRAL_FILE" ]; then
-		rm  "$DEFERRAL_FILE"
-	    fi
-	else
-	    # 時間が足りない場合は延期処理
-	    echo "$(( ($start_at/1000 - $timenow)/60 )) mins left but $mins_toencode mins needed"
-	    echo "WARNING: No enough time to encode until the next recording"
-	    new_count=$((deferral_count + 1))
-	    echo "$new_count" > "$DEFERRAL_FILE"
-	    echo "Deferred ($new_count/$MAX_DEFERRALS)"
-	fi
+    # 延期回数管理
+    deferral_count=$(cat "$DEFERRAL_FILE" 2>/dev/null || echo "0")
+    # 最大延期回数チェック
+    if [[ $deferral_count -ge $MAX_DEFERRALS ]]; then
+        echo "WARNING: Maximum Number of Deferrals Exceeded ($MAX_DEFERRALS)" >&2
+        echo "WARNING: Too many recordings to process. Complete them manually." >&2
+        if [ -v NTFY_URL ]; then
+    	curl -H "X-Priority: 3" -d "WARNING: $WORKDIR/$(basename "$0")  最大延期回数($MAX_DEFERRALS)を超えました。手動で処理してください" "$NTFY_URL"
+        fi
     fi
-fi
+    
+    # --- 未処理ファイルの合計サイズ計算関数 ---
+    calculate_total_size() {
+        local total_bytes=0
+        local base_dir=""
+    
+        # SOURCEDIR が設定されていなければ 0 を返す（エラーを出さない）
+        if [ -n "$SOURCEDIR" ]; then
+            base_dir="$SOURCEDIR"
+        else
+            echo "0"
+            return 0
+        fi
+    
+        # TOPROCESS がコマンドでなければ 0 を返す
+        if ! command -v "$TOPROCESS" >/dev/null 2>&1; then
+            echo "0"
+            return 0
+        fi
+    
+        # while ループでファイル一覧を処理
+        while IFS= read -r filename; do
+            # 空行はスキップ
+            [ -z "$filename" ] && continue
+    
+            file_path="$base_dir/$filename"
+    
+            # ファイルがなければスキップ（警告も出さない）
+            if [ -f "$file_path" ]; then
+                size=$(stat -c%s "$file_path" 2>/dev/null || echo 0)
+                total_bytes=$((total_bytes + size))
+            fi
+        done < <("$TOPROCESS" 2>/dev/null)
+    
+        # GB単位に変換
+        local total_gb=$(awk "BEGIN {printf \"%.2f\", $total_bytes / (1024*1024*1024)}")
+    
+        echo "$total_gb"
+    }
+    
+    # --- メイン処理 ---
+    if [ "$WATCHDIR" = "true" ]; then
+        # ディレクトリ監視型
+    
+        # 同期の完全安定待ち
+        STABILITY_WAIT=5
+        size_before=$(calculate_total_size)
+        
+        if [ "$size_before" != "0.00" ]; then
+            echo "Detected potential files to process ($size_before GB). Checking sync stability..."
+            sleep "$STABILITY_WAIT"
+            size_after=$(calculate_total_size)
+            
+            while [ "$size_before" != "$size_after" ]; do
+                echo "Sync is still active ($size_before GB -> $size_after GB). Waiting $STABILITY_WAIT seconds..."
+                size_before="$size_after"
+                sleep "$STABILITY_WAIT"
+                size_after=$(calculate_total_size)
+            done
+            echo "Sync is completely finished and stable. Proceeding to process."
+        fi
+    
+        # 安定が確認された、またはファイルがない場合に実行される
+        "$SCRIPT"
+    else
+        # 録画サーバー監視型
+        # 現在Unix時刻
+        timenow=$(date +'%s')
+        
+        # --- Ensure stats directory and file exist ---
+        if [[ ! -f "$STATS_FILE" ]]; then
+    	echo "#run_id,gbs,mins,mingb" > "$STATS_FILE"  # ヘッダをつけて初期化
+    	echo "No previous stats found. Created new $STATS_FILE with initial mingb=$INITIAL_MINGB"
+        fi
+        # === Load previous mingb or initialize ===
+        # 累積データから平均を計算
+        total_gbs=$(awk -F, '{sum+=$2} END{print sum}' "$STATS_FILE")
+        total_mins=$(awk -F, '{sum+=$3} END{print sum}' "$STATS_FILE")
+        if (( $(echo "$total_gbs > 0" | bc -l) )); then
+            prev_mingb=$(echo "scale=3; $total_mins / $total_gbs" | bc -l)
+        else
+            prev_mingb=$INITIAL_MINGB
+        fi
+        mingb=$prev_mingb
+        
+        # 未処理ファイルの合計サイズを計算
+        gbs=$(calculate_total_size)
+        # エンコードにかかる必要時間（分）: 有効２桁で計算
+        mins_toencode=$(echo "scale=2; $gbs*$mingb*1.1" | bc) #1割の余裕をもたせる
+        # 録画中件数
+        response=$(curl -s "${EPGSTATION_URL}/api/recording?isHalfWidth=false")
+        count=$(echo "$response" | rev | cut -c 2-2 | rev)
+    
+        if [ "$count" = "0" ]; then
+    	start_at=$(curl -s "${EPGSTATION_URL}/api/reserves?type=normal&limit=1&isHalfWidth=false" | jq -r '.reserves[0].startAt')
+    	result=$(echo "scale=2; ($start_at/1000 - $timenow)/60 > $mins_toencode" | bc)
+    	if [ "$result" -eq 1 ]; then
+    	    # 時間が足りる場合は処理開始
+    	    start_time=$(date +%s)
+    	    "$SCRIPT"
+    	    end_time=$(date +%s)
+    	    duration=$((end_time - start_time))
+    	    mins=$((duration / 60))
+    
+    	    # 記録を残す
+    	    if (( $(echo "$gbs >= $MIN_GBS && $mins >= $MIN_MINS" | bc -l) )); then
+    		run_id=$(( $(wc -l < "$STATS_FILE" 2>/dev/null || echo 0) + 1 ))
+    		echo "$run_id,$gbs,$mins,$mingb" >> "$STATS_FILE"
+    		echo "Statistics have been logged to file $STATS_FILE with the following values: run ID - $run_id, GigaBytes - $gbs, Minutes - $mins, Total: Minute/GigaBytes/ - $mingb."
+    	    fi
+    
+    	    if [ -f "$DEFERRAL_FILE" ]; then
+    		rm  "$DEFERRAL_FILE"
+    	    fi
+    	else
+    	    # 時間が足りない場合は延期処理
+    	    echo "$(( ($start_at/1000 - $timenow)/60 )) mins left but $mins_toencode mins needed"
+    	    echo "WARNING: No enough time to encode until the next recording"
+    	    new_count=$((deferral_count + 1))
+    	    echo "$new_count" > "$DEFERRAL_FILE"
+    	    echo "Deferred ($new_count/$MAX_DEFERRALS)"
+    	fi
+        else
+    	    echo "Now recording, exiting" #録画中
+        fi
+    fi
 
+    else
+    #強制エンコード
+    "$SCRIPT"
+fi
+    
 # lockfile を削除
 rm -f "$LOCKFILE"

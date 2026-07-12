@@ -1,5 +1,5 @@
 #!/bin/bash
-# --- chkdrp.sh : M2TS/TSファイルの破損検査 ---
+# --- chkdrp.sh : M2TS/TSファイルの破損・メモリ爆発予兆検査 ---
 # 使い方: ./chkdrp.sh input.m2ts
 
 set -euo pipefail
@@ -11,22 +11,30 @@ ENV_FILE="$SCRIPT_DIR/env.sh"
 INPUT="$1"
 BASENAME=$(basename "$INPUT")
 
-# --- 一時ログ ---
+# --- 一時ログファイル ---
 LOG=$(mktemp /tmp/chkdrp.XXXXXX.log)
-LOG2=$(mktemp /tmp/chkdrp.XXXXXX.log)
 
-# --- ffmpegログ収集（error以上をすべて）---
-ffmpeg -v error -i "$INPUT" -f null - 2> "$LOG" || true
-# warningレベル
-ffmpeg -v warning -i "$INPUT" -f null - 2> "$LOG2" || true
+# --- FFmpegの実行 ---
+# M2TSは正常でも終了コードが1になりがち(終了コードによる成否判定はしない)
+set +e
+ffmpeg -v warning -i "$INPUT" -f null - 2> "$LOG"
+set -e
 
-# --- カテゴリ別カウント ---
-COUNT_TOTAL=$(grep -i "error" "$LOG" | wc -l)
-COUNT_AUDIO=$(grep -Ei "aac|audio|channel element|submitting packet to decoder" "$LOG2" | wc -l)
-COUNT_VIDEO=$(grep -Ei "mpeg2video|vist|vdec|invalid mb type|motion_type|ac-tex|Warning MVs|corrupt decoded frame" "$LOG2" | wc -l)
-COUNT_TS=$(grep -Ei "mpegts|Packet corrupt|corrupt input packet|non[- ]monotone|invalid dts|invalid pts|timestamp" "$LOG2" | wc -l)
+# =================================================================
+#  判定：キーワードの仕分け
+# =================================================================
 
-# --- 通知 ---
+# 1. 【CRITICAL】メモリ爆発（同期待ちループ）を引き起こす可能性あり
+CRITICAL_PATTERN="no PTS found"
+
+# 2. 【WARN】パケットは壊れているが、FFmpegが「捨てて進む」ことができる警告
+WARN_PATTERN="start time for stream|Could not find codec parameters|channel element|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
+
+# --- カウント実行 ---
+COUNT_CRITICAL=$(grep -Ei "$CRITICAL_PATTERN" "$LOG" | wc -l || true)
+COUNT_WARN=$(grep -Ei "$WARN_PATTERN" "$LOG" | wc -l || true)
+
+# --- 通知処理 ---
 notify() {
     local LEVEL="$1"
     local MSG="$2"
@@ -34,19 +42,41 @@ notify() {
         curl -H "X-Priority: $LEVEL" -d "$MSG" "$NTFY_URL" >/dev/null 2>&1 || true
     fi
 }
-MESSAGE=$(cat <<EOF
-CHKDRP: $BASENAME
-ERRORS: $COUNT_TOTAL, WARNINGS: $(( COUNT_AUDIO + COUNT_VIDEO + COUNT_TS )) (Audio: $COUNT_AUDIO, Video: $COUNT_VIDEO, TS: $COUNT_TS)
-EOF
-)
 
-echo "$MESSAGE"
-if (( COUNT_TOTAL > 0 )); then
-    notify 3 "$MESSAGE"
+if (( COUNT_CRITICAL > 0 )); then
+    #  パターン1：危険（要警戒）
+    RESULT_STR="CRITICAL"
+    MESSAGE=$(cat <<EOF
+CHKDRP: $BASENAME
+$RESULT_STR :  危険を検知. Critical_Lines=$COUNT_CRITICAL, Total_Warnings: $COUNT_WARN
+EOF
+    )
+    echo "$MESSAGE"
+    notify 4 "$MESSAGE"
+
+elif (( COUNT_WARN > 0 )); then
+    #  パターン2：軽微な警告あり（通常ドロップ・問題なし）
+    RESULT_STR="WARNING"
+    MESSAGE=$(cat <<EOF
+CHKDRP: $BASENAME
+$RESULT_STR :  軽微なドロップ. Total_Warnings: $COUNT_WARN
+EOF
+    )
+    echo "$MESSAGE"
+    notify 1 "$MESSAGE"
+
 else
+    #  パターン3：完全正常
+    RESULT_STR="SUCCESS"
+    MESSAGE=$(cat <<EOF
+CHKDRP: $BASENAME
+$RESULT_STR :  エラー・警告なし
+EOF
+    )
+    echo "$MESSAGE"
     notify 1 "$MESSAGE"
 fi
 
-
+# ログを削除; 正常終了(0)
 rm -f "$LOG"
-rm -f "$LOG2"
+exit 0

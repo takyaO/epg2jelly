@@ -30,7 +30,7 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 
 ```*/4 * * * * $HOME/work/encode.sh >> $HOME/work/encode.log 2>&1```
 
-**ffmpeg のオプションは enc.js (CMカットはenc01.sh)**
+**ffmpeg のオプションは enc.js (以下、第３０回参照)**
 
 ## 動作イメージ（ショート動画）
 
@@ -160,3 +160,7 @@ OpenAI Whisperを使ってみる
 [第29回：マルチチャンネル対応](https://note.com/leal_walrus5520/n/n2d01e784a813)
 
 バグ対策
+
+[第30回：正式リリース(Ver.1.0)](https://note.com/leal_walrus5520/n/n6bb1f4231910)
+
+enc.js マニュアル

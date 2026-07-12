@@ -30,7 +30,7 @@ def load_processed_filenames():
             # 空のリストでファイルを作成
             with open(PROCESSED_FILE, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=4)
-            return set()
+                return set()
     except Exception as e:
         print(f"Error loading processed filenames: {e}")
         # エラー時は空のセットを返す
@@ -45,30 +45,6 @@ def save_processed_filenames(processed_filenames):
             json.dump(list(processed_filenames), f, ensure_ascii=False, indent=4)
     except Exception as e:
         print(f"Error saving processed filenames: {e}")
-       
-# ===== フォルダ監視モード用の関数 =====
-def get_recorded_programs_folder(recorded_dir):
-    """録画済みの番組情報を取得（ローカルファイル版）"""
-    recorded_programs = []
-   
-    # 指定ディレクトリ内の全.m2tsファイルを検索
-    m2ts_files = glob.glob(os.path.join(recorded_dir, '**/*.m2ts'), recursive=True)
-    
-    for file_path in m2ts_files:
-        try:
-            # Syncthingの一時ファイルを除外
-            if is_syncthing_temp_file(file_path):
-                continue
-                
-            # ファイルが書き込み完了状態かチェック
-            if is_file_ready(file_path):
-                recorded_programs.append(file_path)
-                
-        except OSError as e:
-            print(f"Error accessing file {file_path}: {e}")
-            continue
-    
-    return recorded_programs
 
 def is_syncthing_temp_file(file_path):
     """Syncthingの一時ファイルかチェック"""
@@ -77,7 +53,7 @@ def is_syncthing_temp_file(file_path):
     return any(pattern in filename for pattern in temp_patterns)
 
 def is_file_ready(file_path):
-    """ファイルが書き込み完了状態かチェック（改良版）"""
+    """ファイルが書き込み完了状態かチェック"""
     try:
         # ファイルサイズが安定しているかチェック
         size1 = os.path.getsize(file_path)
@@ -94,7 +70,7 @@ def is_file_ready(file_path):
                 return False
         else:
             return False
-            
+        
     except OSError:
         return False
 
@@ -102,18 +78,31 @@ def get_unprocessed_filenames_folder(processed_filenames, recorded_dir):
     """未処理の番組のファイル名を取得（フォルダ監視版）"""
     unprocessed_filenames = []
     
-    # 録画済みファイルのフルパスを取得
-    recorded_files = get_recorded_programs_folder(recorded_dir)
+    # 指定ディレクトリ内の全.m2tsファイルを検索
+    m2ts_files = glob.glob(os.path.join(recorded_dir, '**/*.m2ts'), recursive=True)
     
-    for file_path in recorded_files:
-        # ファイルパスからファイル名のみを抽出
-        filename = os.path.basename(file_path)
+    for file_path in m2ts_files:
+        try:
+            filename = os.path.basename(file_path)
+            
+            # 1. 処理済みリストにあるなら、即スキップ
+            if filename in processed_filenames:
+                continue
+            
+            # 2. Syncthingの一時ファイルを除外
+            if is_syncthing_temp_file(file_path):
+                continue
+            
+            # 3. 本当に未処理のファイル（新着）だけ、1秒間の書き込み完了チェックを行う
+            if is_file_ready(file_path):
+                unprocessed_filenames.append(filename)
+                
+        except OSError as e:
+            print(f"Error accessing file {file_path}: {e}")
+            continue
         
-        # 処理済みリストにないファイルを未処理として追加
-        if filename not in processed_filenames:
-            unprocessed_filenames.append(filename)
-    
     return unprocessed_filenames
+
 
 # ===== サーバー監視モード用の関数 =====
 def get_recorded_programs_server():
@@ -150,7 +139,7 @@ def main():
         if not sourcedir:
             print("Error: SOURCEDIR environment variable is not set.")
             return
-            
+        
         if not os.path.exists(sourcedir):
             print(f"Error: Source folder '{sourcedir}' does not exist.")
             return

@@ -9,29 +9,25 @@ from datetime import datetime
 from pathlib import Path
 
 # ==========================================
-# 設定: 処理済みリストファイル
+# 設定: 固定ファイル名
 # ==========================================
 JSON_FILE = "processed_filenames.json"
 
 # --- env.sh から SOURCEDIR を動的に読み込む処理 ---
 SCRIPT_DIR = Path(__file__).resolve().parent
 ENV_FILE = SCRIPT_DIR / "env.sh"
-SOURCEDIR = "recorded"  # デフォルト値（env.sh がない場合のフォールバック）
+SOURCEDIR = "recorded"  # デフォルト値
+
 if ENV_FILE.exists():
     with open(ENV_FILE, "r", encoding="utf-8") as f:
         for line in f:
-            # 空白を除去した先頭が '#' ならコメント行として無視
             if line.strip().startswith('#'):
                 continue
                 
-            # 'export SOURCEDIR=...' または 'SOURCEDIR=...' の行を抽出
             match = re.match(r'^\s*(?:export\s+)?(SOURCEDIR)\s*=\s*["\']?(.*?)["\']?\s*$', line)
             if match:
                 _, val = match.groups()
-                
-                # 行末のインラインコメント（ # m2ts ...）があれば除去する
                 val = val.split('#')[0].strip()
-                # 前後の不要なクォーテーションを再度クリーンアップ
                 val = val.strip('"\'')
 
                 val = os.path.expandvars(val)
@@ -42,6 +38,7 @@ if ENV_FILE.exists():
                 else:
                     SOURCEDIR = val
                 break
+# ==========================================
 
 def load_data():
     if not os.path.exists(JSON_FILE):
@@ -120,6 +117,7 @@ def main(stdscr):
     
     current_row = 0
     offset = 0
+    is_reverse_sort = False 
 
     while True:
         stdscr.clear()
@@ -144,9 +142,9 @@ def main(stdscr):
                 except curses.error:
                     pass
 
-        # メニューバーのテキスト変更 (qとxの案内を追加)
-        menu1 = format_line("[↑/↓]:移動 [Space]:選択/解除 [q]:保存終了 [x]:破棄終了", w - 1)
-        menu2 = format_line("[1]:不在ファイル一括削除 [2]:選択項目を削除 [3]:日付タグでソート", w - 1)
+        # メニューバーのテキスト（幅を考慮して文言を少しスマート化）
+        menu1 = format_line("[↑/↓/k/j]:移動 [Space]:選択/解除 [q]:保存終了 [x]:破棄終了", w - 1)
+        menu2 = format_line("[1]:実体なし削除 [2]:選択削除 [3]:日付ソート(昇/降) [4]:未処理動画を処理済化", w - 1)
         
         try:
             stdscr.addstr(h - 2, 0, menu1, curses.A_REVERSE)
@@ -158,13 +156,13 @@ def main(stdscr):
 
         key = stdscr.getch()
 
-        if key == curses.KEY_UP:
+        if key == curses.KEY_UP or key == ord('k'):
             if current_row > 0:
                 current_row -= 1
                 if current_row < offset:
                     offset -= 1
                     
-        elif key == curses.KEY_DOWN:
+        elif key == curses.KEY_DOWN or key == ord('j'):
             if current_row < len(data) - 1:
                 current_row += 1
                 if current_row >= offset + list_height:
@@ -206,15 +204,39 @@ def main(stdscr):
                 match = re.search(r'__S(\d{4})E(\d{4})-(\d{4})', filename)
                 return match.group(0) if match else filename
 
-            data.sort(key=extract_date_tag)
-            show_message(stdscr, h, w, "日付タグでソートしました")
+            is_reverse_sort = not is_reverse_sort
+            data.sort(key=extract_date_tag, reverse=is_reverse_sort)
+            order_str = "降順:新しい順" if is_reverse_sort else "昇順:古い順"
+            show_message(stdscr, h, w, f"日付タグでソートしました ({order_str})")
+
+        elif key == ord('4'):
+            if not os.path.exists(SOURCEDIR):
+                show_message(stdscr, h, w, "エラー: SOURCEDIR が見つかりません")
+            else:
+                try:
+                    # 1. SOURCEDIR内の実ファイルのうち、拡張子が .m2ts のものだけを抽出
+                    all_files = os.listdir(SOURCEDIR)
+                    m2ts_files = [f for f in all_files if f.endswith('.m2ts') and os.path.isfile(os.path.join(SOURCEDIR, f))]
+                    
+                    # 2. 現在のdata（JSONリスト）にまだ登録されていない未処理ファイルを抽出
+                    new_files = [f for f in m2ts_files if f not in data]
+                except Exception as e:
+                    show_message(stdscr, h, w, "エラー: ディレクトリの読み込みに失敗しました")
+                    new_files = []
+
+                if not new_files:
+                    show_message(stdscr, h, w, "追加する未処理のm2tsファイルはありません")
+                else:
+                    prompt = f"未登録のm2tsファイル {len(new_files)}件 を追加しますか？ (y/n): "
+                    if ask_confirmation(stdscr, h, w, prompt):
+                        # 3. リリストの末尾に追加
+                        data.extend(new_files)
+                        show_message(stdscr, h, w, f"{len(new_files)}件 を処理済みとして追加しました")
             
         elif key == ord('q'):
-            # 保存して終了フラグ
             return data, original_mtime, True
 
         elif key == ord('x'):
-            # 保存せずに終了するか確認
             prompt = "変更を保存せずに終了しますか？ (y/n): "
             if ask_confirmation(stdscr, h, w, prompt):
                 return None, None, False
@@ -236,6 +258,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n強制終了されました。ファイルは保存されていません。")
         sys.exit(1)
-
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/06/29
+# Time stamp: 2026/07/10
