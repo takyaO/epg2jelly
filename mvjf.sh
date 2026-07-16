@@ -53,7 +53,7 @@ extractProgram() {
     local -A delimiter_pairs
 
     # 区切り文字の優先順位リスト
-    delimiter_order=("＃" "♯" "#" "第" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『" " " " " "_" "[")
+    delimiter_order=("＃" "♯" "#" "第" "EP" "Ep" "ep" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『"　" " " " "_" "[")
 
     # 区切り文字と対応するセカンドデリミタを定義
     delimiter_pairs=(
@@ -62,6 +62,9 @@ extractProgram() {
         ["♯"]="_"
         ["#"]="_"
         ["第"]="_"
+        ["EP"]="_"
+        ["Ep"]="_"
+        ["ep"]="_"
         ["最終回"]="_"
         ["最終話"]="_"
         ["最終首"]="_"
@@ -72,12 +75,12 @@ extractProgram() {
         ["▼"]="_"
         ["▽"]="_"
         ["◆"]="_"
-        [" " Rhine]="_"
+        [" "]="_"
+        ["　"]="_"
         ["【"]="】"
         ["「"]="」"
         ["『"]="』"
         ["["]="."
-        [" "]="_"
         ["_"]="."
     )
 
@@ -122,7 +125,6 @@ extractProgram() {
 
     found_delimiter=""
     for delimiter in "${delimiter_order[@]}"; do
-        # 【修正1】 _ を * に変更
         if [[ "$FILENAME" == *"$delimiter"* ]]; then
             found_delimiter="$delimiter"
             break
@@ -138,13 +140,21 @@ extractProgram() {
                 EPISODE="$pos"
             else
                 PROGRAM="${FILENAME}"
-            fi  
+            fi
+        # EP, Ep, ep の後に数字が続く場合のみ区切り文字として処理
+        elif [[ "$delimiter" =~ ^(EP|Ep|ep)$ ]]; then
+            if [[ "$FILENAME" =~ ([Ee][Pp][０-９0-9]{1,3}) ]]; then
+                pos=${BASH_REMATCH[0]}
+                PROGRAM="${FILENAME%%$pos*}"
+                EPISODE="$pos"
+            else
+                PROGRAM="${FILENAME}"
+            fi
         else
-            # 【修正2】 条件式を省略して単なる else に変更
             PROGRAM="${FILENAME%%$delimiter*}"
             rest="${FILENAME#*$delimiter}"
             second_delimiter="${delimiter_pairs[$delimiter]}"
-            # 【修正3】 [ を [[ に、= を == に、_ を * に変更
+
             if [ -n "$second_delimiter" ] && [[ "$rest" == *"$second_delimiter"* ]]; then
                 EPISODE="${rest%%$second_delimiter*}"
             else
@@ -163,18 +173,17 @@ extractProgram() {
     if echo "$ORIGINAL" | grep -qE '^[「『][^」』]+[」』]'; then
         PROGRAM=$(echo "$ORIGINAL" | sed -nE 's/^[「『]([^」』]*)[」』].*/\1/p')
     else
-        # フォールバック処理
+        # フォールバック処理（全角スペースと半角スペースを末尾・先頭から確実に除去）
         PROGRAM=$(printf '%s' "$ORIGINAL" | sed -e 's/【[^】]*】//g' \
-                                                 -e 's/＜[^＞]*＞//g' \
-                                                 -e 's/[「『][^」』]*[」』].*//g' \
-                                                 -e 's/◆.*$//' \
-                                                 -e 's/▼.*$//' \
-                                                 -e 's/▽.*$//' \
-                                                 -e 's/【.*$//g' \
-                                                 -e 's/「.*$//g' \
-                                                 -e 's/[  ]*$//g' \
-                                                 -e 's/^[  ]*//g' \
-                                                 -e 's/[  ].*$//' )
+						-e 's/＜[^＞]*＞//g' \
+						-e 's/[「『][^」』]*[」』].*//g' \
+						-e 's/◆.*$//' \
+						-e 's/▼.*$//' \
+						-e 's/▽.*$//' \
+						-e 's/【.*$//g' \
+						-e 's/「.*$//g' \
+						-e 's/[[:space:] ]*$//g' \
+						-e 's/^[[:space:] ]*//g' )
     fi
     EPISODE=$(printf '%s' "$EPISODE" | sed -e 's/\[[^]]*\]//g' -e 's/__.*$//' )
     if [ -z "$PROGRAM" ]; then
@@ -190,7 +199,6 @@ matched_folder=""
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
         if [ -n "$existing" ]; then
-            # 【修正4】 _ を * に変更
             if [[ "$base" == *"$existing"* ]] || [[ "$existing" == *"$base"* ]]; then
                 matched_folder="$existing"
                 break
@@ -206,7 +214,6 @@ if [ -z "$matched_folder" ]; then
     if [ -f "$LIST_FILE" ]; then
         while IFS= read -r existing; do
             if [ -n "$existing" ]; then
-                # 【修正5】 _ を * に変更
                 if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
                     matched_folder="$existing"
                     break
@@ -244,4 +251,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/07/11
+#Time stamp: 2026/07/16
