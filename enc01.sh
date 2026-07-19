@@ -294,7 +294,11 @@ ass2vtt() {
 		    notify 4 "Error: enc.js failed: $FILENAME"
 		}
 	    else
-		notify 4 "Error: chapter failed: $FILENAME"		
+		notify 3 "Error: chapter failed: $FILENAME"
+		./enc.js "$SOURCEDIR/$FILE" epg.json || {
+		    echo "Error: enc.js failed" >&2
+		    notify 4 "Error: enc.js failed: $FILENAME"
+		}
 	    fi
 	fi
 
@@ -352,4 +356,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/07/11
+# Time stamp: 2026/07/19
