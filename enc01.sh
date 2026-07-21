@@ -281,7 +281,7 @@ ass2vtt() {
 		    echo "Error: enc.js failed" >&2
 		    notify 4 "Error: enc.js failed: $FILENAME"
 		}
-		rm work_$$.m2ts
+#		rm work_$$.m2ts
 	    else
 		notify 4 "Error: jls failed: $FILENAME"
 	    fi

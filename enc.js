@@ -1170,21 +1170,6 @@ function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile) {
     });
 }
 
-function getCodecSpecificArgs(useCodec) {
-    if (useCodec === 'h264_qsv') {
-        return ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '21', '-profile:v', 'high', '-level', '4.2'];
-    } else if (useCodec === 'hevc_qsv') {
-        return ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '23', '-profile:v', 'main'];
-    } else if (useCodec === 'hevc_vaapi') {
-        return ['-vf', 'format=nv12,hwupload,deinterlace_vaapi', '-r', '30000/1001', '-aspect', '16:9', '-qp', '23'];
-    } else if (useCodec === 'libx264') {
-        return ['-vf', 'yadif', '-preset', 'slow', '-crf', '23', '-aspect', '16:9'];
-    } else if (useCodec === 'h264_vaapi') {
-        return ['-vf', 'format=nv12,hwupload,deinterlace_vaapi', '-r', '30000/1001', '-aspect', '16:9', '-rc_mode', 'ICQ', '-global_quality', '20', '-profile:v', 'high', '-level', '4.2', '-compression_level', '1'];
-    }
-    return [];
-}
-
 function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, audioCodec, audioMetadata = []) {
     const vaapiDevice = videoCodec.includes('vaapi') ? ['-vaapi_device', '/dev/dri/renderD128'] : [];
 
@@ -1197,21 +1182,40 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
         '-t', duration.toString(),
         '-map', '0:v', '-map', '0:a',
         '-c:v', videoCodec,
-        ...(videoCodec === 'h264_qsv' ? ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '21', '-profile:v', 'high', '-level', '4.2'] :
-              videoCodec === 'hevc_qsv' ? ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '23', '-profile:v', 'main'] :
+        ...(videoCodec === 'h264_qsv' ? [
+                  '-init_hw_device', 'qsv=qsv:hw',
+                  '-filter_hw_device', 'qsv',
+                  '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
+                  '-r', '30000/1001',
+                  '-aspect', '16:9',
+                  '-preset', 'slow',
+                  '-global_quality', '21',
+                  '-profile:v', 'high',
+                  '-level', '4.2'
+              ] :
+              videoCodec === 'hevc_qsv' ? [
+                  '-init_hw_device', 'qsv=qsv:hw',
+                  '-filter_hw_device', 'qsv',
+                  '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
+                  '-r', '30000/1001',
+                  '-aspect', '16:9',
+                  '-preset', 'slow',
+                  '-global_quality', '23',
+                  '-profile:v', 'main'
+              ] :
               videoCodec === 'hevc_vaapi' ? [
-                  '-vf', 'yadif,format=nv12,hwupload', 
-                  '-r', '30000/1001', 
-                  '-aspect', '16:9', 
+                  '-vf', 'yadif,format=nv12,hwupload',
+                  '-r', '30000/1001',
+                  '-aspect', '16:9',
                   '-qp', '23'
               ] :
               videoCodec === 'libx264' ? ['-vf', 'yadif', '-preset', 'slow', '-crf', '23', '-aspect', '16:9'] :
               videoCodec === 'h264_vaapi' ? [
-                  '-vf', 'yadif,format=nv12,hwupload', 
-                  '-r', '30000/1001', 
-                  '-aspect', '16:9', 
-                  '-rc_mode', 'ICQ', 
-                  '-global_quality', '20', 
+                  '-vf', 'yadif,format=nv12,hwupload',
+                  '-r', '30000/1001',
+                  '-aspect', '16:9',
+                  '-rc_mode', 'ICQ',
+                  '-global_quality', '20',
                   '-profile:v', 'high'
               ] : []),
         '-c:a', audioCodec,
@@ -1219,7 +1223,7 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
         '-ac', '2',
         ...audioMetadata,
         outputPath
-    ];
+    ];    
     
     console.log(`Encoding segment: ${startSec}s for ${duration}s`);
     
@@ -1243,15 +1247,51 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
 
 function getCodecSpecificArgs(useCodec) {
     if (useCodec === 'h264_qsv') {
-        return ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '21', '-profile:v', 'high', '-level', '4.2'];
+        return [
+            '-init_hw_device', 'qsv=qsv:hw',
+            '-filter_hw_device', 'qsv',
+            '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
+            '-r', '30000/1001',
+            '-aspect', '16:9',
+            '-preset', 'slow',
+            '-global_quality', '21',
+            '-profile:v', 'high',
+            '-level', '4.2'
+        ];
     } else if (useCodec === 'hevc_qsv') {
-        return ['-vf', 'yadif', '-r', '30000/1001', '-aspect', '16:9', '-preset', 'slow', '-global_quality', '23', '-profile:v', 'main'];
+        return [
+            '-init_hw_device', 'qsv=qsv:hw',
+            '-filter_hw_device', 'qsv',
+            '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
+            '-r', '30000/1001',
+            '-aspect', '16:9',
+            '-preset', 'slow',
+            '-global_quality', '23',
+            '-profile:v', 'main'
+        ];
     } else if (useCodec === 'hevc_vaapi') {
-        return ['-vf', 'yadif,format=nv12,hwupload', '-r', '30000/1001', '-aspect', '16:9', '-qp', '23'];
+        return [
+            '-vf', 'yadif,format=nv12,hwupload',
+            '-r', '30000/1001',
+            '-aspect', '16:9',
+            '-qp', '23'
+        ];
     } else if (useCodec === 'libx264') {
-        return ['-vf', 'yadif', '-preset', 'slow', '-crf', '23', '-aspect', '16:9'];
+        return [
+            '-vf', 'yadif',
+            '-preset', 'slow',
+            '-crf', '23',
+            '-aspect', '16:9'
+        ];
     } else if (useCodec === 'h264_vaapi') {
-        return ['-vf', 'yadif,format=nv12,hwupload', '-r', '30000/1001', '-aspect', '16:9', '-rc_mode', 'ICQ', '-global_quality', '20', '-profile:v', 'high'];
+        return [
+            '-vf', 'yadif,format=nv12,hwupload',
+            '-r', '30000/1001',
+            '-aspect', '16:9',
+            '-rc_mode', 'ICQ',
+            '-global_quality', '20',
+            '-profile:v', 'high'
+        ];
     }
     return [];
 }
@@ -1493,20 +1533,21 @@ function getCodecSpecificArgs(useCodec) {
             inputOptions.push('-ss', cutSecond.toString());
         }
 
-        const outputArgs = [
-            '-y',
-            ...inputOptions,
-            '-i', getEnv('INPUT'),
-            ...chapterInputArgs,
-            '-map', '0:0',
-            '-c:v', useCodec,
-            ...getCodecSpecificArgs(useCodec),
-            ...audio.args,
-            ...metadataArgs,
-            ...(hasValidSubtitles ? sub.map : []),
-            ...chapterMapArgs,
-            getEnv('OUTPUT')
-        ];
+	const outputArgs = [
+	    '-y',
+	    ...getAnalyze(),
+	    ...inputOptions,
+	    '-i', getEnv('INPUT'),
+	    ...chapterInputArgs,
+	    '-map', '0:0',
+	    '-c:v', useCodec,
+	    ...getCodecSpecificArgs(useCodec),
+	    ...audio.args,
+	    ...metadataArgs,
+	    ...(hasValidSubtitles ? sub.map : []),
+	    ...chapterMapArgs,
+	    getEnv('OUTPUT')
+	];
 
         console.log('Input file:', getEnv('INPUT'));
         console.log('Output file:', getEnv('OUTPUT'));
@@ -1572,4 +1613,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/07/10
+// Time stamp: 2026/07/21
