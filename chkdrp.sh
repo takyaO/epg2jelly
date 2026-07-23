@@ -53,7 +53,7 @@ EOF
     )
     echo "$MESSAGE"
     notify 4 "$MESSAGE"
-
+    exit 1
 elif (( COUNT_WARN > 0 )); then
     #  パターン2：軽微な警告あり（通常ドロップ・問題なし）
     RESULT_STR="WARNING"

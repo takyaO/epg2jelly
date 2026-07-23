@@ -266,20 +266,22 @@ ass2vtt() {
         GRSTRING=$(echo "$FILENAME" | sed -n 's/.*\(GR[0-9][0-9]\).*/\1/p')
 
         cd "$WORKDIR"
+	chkdrp_status=0
 	if [ "${CHKDRP}" != "false"  ]; then
-	    ./chkdrp.sh "$SOURCEDIR/$FILE" 
+	    ./chkdrp.sh "$SOURCEDIR/$FILE"
+	    chkdrp_status=$?
 	fi
         ./epg.sh "$FILE" > epg.json
 	
-	if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
+	if [ $chkdrp_status -eq 0 ] && [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
 	    echo "Start trim processing $FILE "
 	    jls "$SOURCEDIR/$FILE" chap_out.txt jls_out.txt
 	    if [ $? -eq 0 ]; then
 		# 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
 		ulimit -v 4089446			    
 		./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt jls_out.txt || {
-		    echo "Error: enc.js failed" >&2
-		    notify 4 "Error: enc.js failed: $FILENAME"
+		    echo "Error: enc.js failed in trim mode" >&2
+		    notify 4 "Error: enc.js failed in trim mode: $FILENAME"
 		}
 #		rm work_$$.m2ts
 	    else
@@ -290,8 +292,8 @@ ass2vtt() {
 	    chapter "$SOURCEDIR/$FILE" chap_out.txt
 	    if [ $? -eq 0 ]; then 
 		./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt|| {
-		    echo "Error: enc.js failed" >&2
-		    notify 4 "Error: enc.js failed: $FILENAME"
+		    echo "Error: enc.js failed with chap_out.txt" >&2
+		    notify 4 "Error: enc.js failed with chap_out.txt: $FILENAME"
 		}
 	    else
 		notify 3 "Error: chapter failed: $FILENAME"
@@ -356,4 +358,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/07/19
+# Time stamp: 2026/07/23
