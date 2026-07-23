@@ -25,8 +25,7 @@ set -e
 # =================================================================
 
 # 1. 【CRITICAL】メモリ爆発（同期待ちループ）を引き起こす可能性あり
-#CRITICAL_PATTERN="no PTS found"
-CRITICAL_PATTERN="0 channels|unspecified sample format|no TS found at start|non monotonically increasing dts.*: [0-9]{5,}"
+CRITICAL_PATTERN="0 channels|unspecified sample format|no TS found at start|no PTS found|non monotonically increasing dts.*: [0-9]{5,}"
 
 # 2. 【WARN】パケットは壊れているが、FFmpegが「捨てて進む」ことができる警告
 WARN_PATTERN="start time for stream|Could not find codec parameters|channel element|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
@@ -49,7 +48,7 @@ if (( COUNT_CRITICAL > 0 )); then
     RESULT_STR="CRITICAL"
     MESSAGE=$(cat <<EOF
 CHKDRP: $BASENAME
-$RESULT_STR :  危険を検知. Critical_Lines=$COUNT_CRITICAL, Total_Warnings: $COUNT_WARN
+$RESULT_STR :  危険を検知. Critical_Lines: $COUNT_CRITICAL, Total_Warnings: $COUNT_WARN
 EOF
     )
     echo "$MESSAGE"
