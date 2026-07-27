@@ -78,5 +78,5 @@ EOF
 fi
 
 # ログを削除; 正常終了(0)
-rm -f "$LOG"
+#rm -f "$LOG"
 exit 0
