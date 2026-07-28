@@ -196,12 +196,37 @@ base="$(basename "$input_file")"
 matched_folder=""
 
 # まず basename で照合
+matched_folder=""
+min_pos=-1 # 最小の出現位置を保存する変数（-1は未設定の意味）
+
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
         if [ -n "$existing" ]; then
-            if [[ "$base" == *"$existing"* ]] || [[ "$existing" == *"$base"* ]]; then
-                matched_folder="$existing"
-                break
+            # パターン1: $base の中に $existing が含まれる場合
+            if [[ "$base" == *"$existing"* ]]; then
+                # $existing より前の文字列を切り出し、その文字数を出現位置とする
+                prefix="${base%%"$existing"*}"
+                pos="${#prefix}"
+                
+                # 初めてマッチした、または今までより先頭に近い位置でマッチした場合
+                if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]]; then
+                    min_pos=$pos
+                    matched_folder="$existing"
+                    
+                    # 出現位置が 0（完全に先頭）なら、これ以上先頭に近いものはないのでループを抜ける
+                    if [[ $min_pos -eq 0 ]]; then
+                        break
+                    fi
+                fi
+                
+            # パターン2: $existing の中に $base が含まれる場合（元の条件を維持）
+            elif [[ "$existing" == *"$base"* ]]; then
+                pos=0
+                if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]]; then
+                    min_pos=$pos
+                    matched_folder="$existing"
+                    break
+                fi
             fi
         fi
     done < "$LIST_FILE"
@@ -251,4 +276,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/07/16
+#Time stamp: 2026/07/28
