@@ -268,40 +268,71 @@ ass2vtt() {
         cd "$WORKDIR"
 	chkdrp_status=0
 	if [ "${CHKDRP}" != "false"  ]; then
-	    ./chkdrp.sh "$SOURCEDIR/$FILE"
-	    chkdrp_status=$?
+            ./chkdrp.sh "$SOURCEDIR/$FILE"
+            chkdrp_status=$?
 	fi
-        ./epg.sh "$FILE" > epg.json
-	
-	if [ $chkdrp_status -eq 0 ] && [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
-	    echo "Start trim processing $FILE "
-	    jls "$SOURCEDIR/$FILE" chap_out.txt jls_out.txt
-	    if [ $? -eq 0 ]; then
+	./epg.sh "$FILE" > epg.json
+    
+	# Trim(CMカット)の対象番組かどうかの判定
+	if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
+        
+            TARGET_TS="$SOURCEDIR/$FILE"
+            CLEANED_TS=""
+        
+            # エラーが検出された場合
+            if [ $chkdrp_status -ne 0 ]; then
+		echo "Critical errors detected. Running tsreadex to clean streams..."
+		CLEANED_TS="${SOURCEDIR}/clean_work_$$_${FILE}"
+            
+		# 第2音声・字幕などをすべて維持(-m 2)しつつ、パケットやPCRを補正(-x 0/1/2)
+		tsreadex -m 2 -x 0/1/2 "$TARGET_TS" "$CLEANED_TS"
+            
+		# tsreadexが成功し、かつファイルサイズが0でないことを確認
+		if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
+                    TARGET_TS="$CLEANED_TS"
+                    echo "tsreadex completed. Using cleaned TS for Trim processing."
+		else
+                    echo "Warning: tsreadex failed or output empty. Falling back to original TS."
+                    notify 4 "Error: tsreadex failed: $FILENAME"
+                    rm -f "$CLEANED_TS"
+                    CLEANED_TS=""
+		fi
+            fi
+
+            echo "Start trim processing $(basename "$TARGET_TS")"
+            jls "$TARGET_TS" chap_out.txt jls_out.txt
+            if [ $? -eq 0 ]; then
 		# 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
-		ulimit -v 4089446			    
-		./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt jls_out.txt || {
-		    echo "Error: enc.js failed in trim mode" >&2
-		    notify 4 "Error: enc.js failed in trim mode: $FILENAME"
+		ulimit -v 4089446                
+		./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
+                    echo "Error: enc.js failed in trim mode" >&2
+                    notify 4 "Error: enc.js failed in trim mode: $FILENAME"
 		}
-#		rm work_$$.m2ts
-	    else
+            else
 		notify 4 "Error: jls failed: $FILENAME"
-	    fi
+            fi
+        
+            # 処理が終わったら tsreadex で生成した一時ファイルをクリーンアップ
+            if [ -n "$CLEANED_TS" ] && [ -f "$CLEANED_TS" ]; then
+		rm -f "$CLEANED_TS"
+            fi
+
+	    # Trim対象外 (NHKなど)
 	else
-	    echo "Start processing $FILE "
-	    chapter "$SOURCEDIR/$FILE" chap_out.txt
-	    if [ $? -eq 0 ]; then 
+            echo "Start processing $FILE "
+            chapter "$SOURCEDIR/$FILE" chap_out.txt
+            if [ $? -eq 0 ]; then 
 		./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt|| {
-		    echo "Error: enc.js failed with chap_out.txt" >&2
-		    notify 4 "Error: enc.js failed with chap_out.txt: $FILENAME"
+                    echo "Error: enc.js failed with chap_out.txt" >&2
+                    notify 4 "Error: enc.js failed with chap_out.txt: $FILENAME"
 		}
-	    else
+            else
 		notify 3 "Error: chapter failed: $FILENAME"
 		./enc.js "$SOURCEDIR/$FILE" epg.json || {
-		    echo "Error: enc.js failed" >&2
-		    notify 4 "Error: enc.js failed: $FILENAME"
+                    echo "Error: enc.js failed" >&2
+                    notify 4 "Error: enc.js failed: $FILENAME"
 		}
-	    fi
+            fi
 	fi
 
 	if [ -e "$SOURCEDIR/$FILE.lwi" ]; then
@@ -358,4 +389,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/07/23
+# Time stamp: 2026/08/03
