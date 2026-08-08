@@ -26,7 +26,6 @@ set -e
 
 # 1. 【CRITICAL】メモリ爆発（同期待ちループ）を引き起こす可能性あり
 CRITICAL_PATTERN="no PTS found"
-#CRITICAL_PATTERN="no PTS found|Sample rate index.*does not match"
 
 # 2. 【WARN】パケットは壊れているが、FFmpegが「捨てて進む」ことができる警告
 WARN_PATTERN="start time for stream|Could not find codec parameters|channel element|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
