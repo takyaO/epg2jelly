@@ -284,10 +284,9 @@ ass2vtt() {
 		echo "Critical errors detected. Running tsreadex to clean streams..."
 		CLEANED_TS="${SOURCEDIR}/clean_work_$$_${FILE}"
             
-		# 第2音声・字幕などをすべて維持(-m 2)しつつ、パケットやPCRを補正(-x 0/1/2)
-		tsreadex -m 2 -x 0/1/2 "$TARGET_TS" "$CLEANED_TS"
-            
-		# tsreadexが成功し、かつファイルサイズが0でないことを確認
+		#-x 18/38/39: EITなどのテーブルを除外, -n -1: 全サービスを保持
+		tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 -d 13 "$TARGET_TS" > "$CLEANED_TS"
+		
 		if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
                     TARGET_TS="$CLEANED_TS"
                     echo "tsreadex completed. Using cleaned TS for Trim processing."
@@ -389,4 +388,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/08/03
+# Time stamp: 2026/08/08
