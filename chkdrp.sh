@@ -24,11 +24,11 @@ set -e
 #  判定：キーワードの仕分け
 # =================================================================
 
-# 1. 【CRITICAL】メモリ爆発（同期待ちループ）を引き起こす可能性あり
-CRITICAL_PATTERN="no PTS found"
+# 1. 【CRITICAL】デコード不能・処理破綻・ストリーム認識失敗を示す決定的なパターン
+CRITICAL_PATTERN="no PTS found|channel element|0 channels|unspecified sample format"
 
-# 2. 【WARN】パケットは壊れているが、FFmpegが「捨てて進む」ことができる警告
-WARN_PATTERN="start time for stream|Could not find codec parameters|channel element|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
+# 2. 【WARN】パケットは壊れているが、FFmpegがスキップして処理を継続できる軽微な警告
+WARN_PATTERN="start time for stream|Could not find codec parameters|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
 
 # --- カウント実行 ---
 COUNT_CRITICAL=$(grep -Ei "$CRITICAL_PATTERN" "$LOG" | wc -l || true)
@@ -78,5 +78,5 @@ EOF
 fi
 
 # ログを削除; 正常終了(0)
-#rm -f "$LOG"
+rm -f "$LOG"
 exit 0

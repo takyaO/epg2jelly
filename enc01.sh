@@ -282,7 +282,7 @@ ass2vtt() {
             # エラーが検出された場合
             if [ $chkdrp_status -ne 0 ]; then
 		echo "Critical errors detected. Running tsreadex to clean streams..."
-		CLEANED_TS="${SOURCEDIR}/clean_work_$$_${FILE}"
+		CLEANED_TS="${FILE}"
             
 		#-x 18/38/39: EITなどのテーブルを除外, -n -1: 全サービスを保持
 		tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 -d 13 "$TARGET_TS" > "$CLEANED_TS"
@@ -315,7 +315,7 @@ ass2vtt() {
             if [ -n "$CLEANED_TS" ] && [ -f "$CLEANED_TS" ]; then
 		rm -f "$CLEANED_TS"
             fi
-
+	    
 	    # Trim対象外 (NHKなど)
 	else
             echo "Start processing $FILE "
@@ -336,6 +336,9 @@ ass2vtt() {
 
 	if [ -e "$SOURCEDIR/$FILE.lwi" ]; then
 		rm "$SOURCEDIR/$FILE.lwi"
+	fi
+	if [ -e "$FILE.lwi" ]; then
+		rm "$FILE.lwi"
 	fi
 
 	if ! grep -q "映画" tvshow.nfo; then
@@ -388,4 +391,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/08/08
+# Time stamp: 2026/08/12
