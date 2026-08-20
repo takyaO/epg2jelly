@@ -25,7 +25,7 @@ set -e
 # =================================================================
 
 # 1. 【CRITICAL】デコード不能・処理破綻・ストリーム認識失敗を示す決定的なパターン
-CRITICAL_PATTERN="no PTS found at end of file|invalid cbp|skipped MB in I-frame"
+CRITICAL_PATTERN="no PTS found at end of file|invalid cbp|[0-9]{5,} >= [0-9]{5,}"
 
 # 2. 【WARN】パケットは壊れているが、FFmpegがスキップして処理を継続できる軽微な警告
 WARN_PATTERN="start time for stream|Could not find codec parameters|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
