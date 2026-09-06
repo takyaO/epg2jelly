@@ -46,20 +46,31 @@ fi
 FILENAME=$(basename "$input_file")
 AD_WORDS="公開|直前|記念|特別|放送|SP"
 
-# 「」と『』を両方処理（複数マッチ対応）
+# 「」と『』を両方処理（閉じカッコが途切れている場合にも対応）
 valid=()
 while IFS= read -r title; do
     [ -n "$title" ] && valid+=("$title")
 done < <(
-    echo "$FILENAME" | sed -nE 's/.*「([^」]+)」.*/\1/p; s/.*『([^』]+)』.*/\1/p'
+    # 1. 閉じカッコがある場合: 「...」 または 『...』
+    # 2. 閉じカッコがない場合: 「 または 『 から、[ や _ や 文字列末尾の手前までを抽出
+    echo "$FILENAME" | sed -nE \
+        -e 's/.*「([^」]+)」.*/\1/p' \
+        -e 's/.*『([^』]+)』.*/\1/p' \
+        -e 's/.*[「『]([^」』\[_]+).*/\1/p'
 )
 
-# 宣伝語チェック（閉じカッコ直後に宣伝語があるものは除外）
+# 重複除去（閉じカッコありでマッチした場合は不完全なマッチを除外するため）
+if [ ${#valid[@]} -gt 1 ]; then
+    # 最初に見つかったものを優先する等の処理
+    valid=("${valid[0]}")
+fi
+
+# 宣伝語チェック
 filtered=()
 for t in "${valid[@]}"; do
-    # 抽出したタイトルの後に閉じカッコと宣伝語が続くかチェック
-    if echo "$FILENAME" | grep -E "(${t})[」』][[:space:]]*($AD_WORDS)" >/dev/null; then
-        # 宣伝語が含まれる場合は除外（スキップ）
+    # 抽出したタイトルの直後（閉じカッコがあってもなくても）に宣伝語が続くかチェック
+    if echo "$FILENAME" | grep -E "(${t})[」』]?[[:space:]]*($AD_WORDS)" >/dev/null; then
+        # 宣伝語が含まれる場合は除外
         echo "Debug: 宣伝語を検出したため除外: $t" >&2
     else
         filtered+=("$t")
@@ -111,4 +122,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/nb685324a21cb
-#Time stamp: 2026/06/22
+#Time stamp: 2026/09/06
