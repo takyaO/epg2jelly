@@ -1182,42 +1182,7 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
         '-t', duration.toString(),
         '-map', '0:v', '-map', '0:a',
         '-c:v', videoCodec,
-        ...(videoCodec === 'h264_qsv' ? [
-                  '-init_hw_device', 'qsv=qsv:hw',
-                  '-filter_hw_device', 'qsv',
-                  '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
-                  '-r', '30000/1001',
-                  '-aspect', '16:9',
-                  '-preset', 'slow',
-                  '-global_quality', '21',
-                  '-profile:v', 'high',
-                  '-level', '4.2'
-              ] :
-              videoCodec === 'hevc_qsv' ? [
-                  '-init_hw_device', 'qsv=qsv:hw',
-                  '-filter_hw_device', 'qsv',
-                  '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
-                  '-r', '30000/1001',
-                  '-aspect', '16:9',
-                  '-preset', 'slow',
-                  '-global_quality', '23',
-                  '-profile:v', 'main'
-              ] :
-              videoCodec === 'hevc_vaapi' ? [
-                  '-vf', 'yadif,format=nv12,hwupload',
-                  '-r', '30000/1001',
-                  '-aspect', '16:9',
-                  '-qp', '23'
-              ] :
-              videoCodec === 'libx264' ? ['-vf', 'yadif', '-preset', 'slow', '-crf', '23', '-aspect', '16:9'] :
-              videoCodec === 'h264_vaapi' ? [
-                  '-vf', 'yadif,format=nv12,hwupload',
-                  '-r', '30000/1001',
-                  '-aspect', '16:9',
-                  '-rc_mode', 'ICQ',
-                  '-global_quality', '20',
-                  '-profile:v', 'high'
-              ] : []),
+        ...getCodecSpecificArgs(videoCodec),
         '-c:a', audioCodec,
         '-b:a', '192k',
         '-ac', '2',
@@ -1613,4 +1578,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/07/21
+// Time stamp: 2026/09/08
