@@ -39,6 +39,23 @@ fi
 # 優先する番組名リストを記したファイルのパス
 LIST_FILE="mvjf.list"
 
+# --------------------------------------------------
+# 番組名リストとの照合・自動登録から除外する一般語リスト
+# --------------------------------------------------
+GENERIC_WORDS=("ニュース" "気象情報")
+
+# 一般語判定関数
+is_generic_word() {
+    local target="$1"
+    local word
+    for word in "${GENERIC_WORDS[@]}"; do
+        if [ "$target" = "$word" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # リストファイルが存在しない場合は作成
 if [ ! -f "$LIST_FILE" ]; then
     echo "#番組フォルダ名として優先される番組名のリスト。Program names to be used as folder names" > "$LIST_FILE"
@@ -195,59 +212,68 @@ extractProgram() {
 base="$(basename "$input_file")"
 matched_folder=""
 
-# まず basename で照合
-matched_folder=""
-min_pos=-1 # 最小の出現位置を保存する変数（-1は未設定の意味）
+# --------------------------------------------------
+# 1. まず basename で最長一致照合
+# --------------------------------------------------
+min_pos=-1 # 最小の出現位置を保存（-1は未設定）
+max_len=-1 # マッチした文字列の最大長を保存
 
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
         if [ -n "$existing" ]; then
+            pos=-1
+            len="${#existing}"
+
             # パターン1: $base の中に $existing が含まれる場合
             if [[ "$base" == *"$existing"* ]]; then
-                # $existing より前の文字列を切り出し、その文字数を出現位置とする
                 prefix="${base%%"$existing"*}"
                 pos="${#prefix}"
-                
-                # 初めてマッチした、または今までより先頭に近い位置でマッチした場合
-                if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]]; then
-                    min_pos=$pos
-                    matched_folder="$existing"
-                    
-                    # 出現位置が 0（完全に先頭）なら、これ以上先頭に近いものはないのでループを抜ける
-                    if [[ $min_pos -eq 0 ]]; then
-                        break
-                    fi
-                fi
-                
-            # パターン2: $existing の中に $base が含まれる場合（元の条件を維持）
+            # パターン2: $existing の中に $base が含まれる場合
             elif [[ "$existing" == *"$base"* ]]; then
                 pos=0
-                if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]]; then
+            fi
+
+            # マッチ判定
+            if [[ $pos -ne -1 ]]; then
+                # 更新条件:
+                # 1. 初めてマッチした (min_pos == -1)
+                # 2. より先頭に近い位置でマッチした (pos < min_pos)
+                # 3. 同じ出現位置だが、より長い文字列でマッチした (pos == min_pos && len > max_len)
+                if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]] || ( [[ $pos -eq $min_pos ]] && [[ $len -gt $max_len ]] ); then
                     min_pos=$pos
+                    max_len=$len
                     matched_folder="$existing"
-                    break
                 fi
             fi
         fi
     done < "$LIST_FILE"
 fi
 
-# ヒットしなければ extractProgram
+# --------------------------------------------------
+# 2. ヒットしなければ extractProgram で抽出し、再照合
+# --------------------------------------------------
 if [ -z "$matched_folder" ]; then
     PROGRAM=$(extractProgram "$base")
-    # extractProgram結果で再照合
-    if [ -f "$LIST_FILE" ]; then
-        while IFS= read -r existing; do
-            if [ -n "$existing" ]; then
-                if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
-                    matched_folder="$existing"
-                    break
+
+    # extractProgram 結果が一般語でない場合のみ mvjf.list と再照合を行う
+    if ! is_generic_word "$PROGRAM"; then
+        if [ -f "$LIST_FILE" ]; then
+            max_match_len=-1
+            while IFS= read -r existing; do
+                if [ -n "$existing" ]; then
+                    if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
+                        len="${#existing}"
+                        # ここでも最長一致を採用（breakせずに最後までリストを見る）
+                        if [[ $len -gt $max_match_len ]]; then
+                            max_match_len=$len
+                            matched_folder="$existing"
+                        fi
+                    fi
                 fi
-            fi
-        done < "$LIST_FILE"
+            done < "$LIST_FILE"
+        fi
+        PROGRAM="${matched_folder:-$PROGRAM}"
     fi
-    # 見つかればそれ、なければ抽出結果
-    PROGRAM="${matched_folder:-$PROGRAM}"
 else
     # 最初の照合でヒットした場合
     PROGRAM="$matched_folder"
@@ -267,13 +293,19 @@ else
         exit 1
     }
     echo "File moved successfully: mv '$input_file' '$final_dir' "
-    if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
-        echo "$PROGRAM" >> "$LIST_FILE"
-        echo "Added program name to $LIST_FILE: $PROGRAM"
+
+    # 一般語の場合は mvjf.list への書き込みもスキップする
+    if ! is_generic_word "$PROGRAM"; then
+        if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
+            echo "$PROGRAM" >> "$LIST_FILE"
+            echo "Added program name to $LIST_FILE: $PROGRAM"
+        else
+            echo "Used program name listed in $LIST_FILE: $PROGRAM"
+        fi
     else
-        echo "Used program name listed in $LIST_FILE: $PROGRAM"
+        echo "Used generic program name (skipped $LIST_FILE update): $PROGRAM"
     fi
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/07/28
+#Time stamp: 2026/09/09
