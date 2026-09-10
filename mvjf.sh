@@ -142,7 +142,8 @@ extractProgram() {
 
     found_delimiter=""
     for delimiter in "${delimiter_order[@]}"; do
-        if [[ "$FILENAME" == *"$delimiter"* ]]; then
+        # 先頭（1文字目）を除いた 2文字目以降に区切り文字が含まれているかチェック
+        if [[ "${FILENAME:1}" == *"$delimiter"* ]]; then
             found_delimiter="$delimiter"
             break
         fi
@@ -308,4 +309,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/09/09
+#Time stamp: 2026/09/10
