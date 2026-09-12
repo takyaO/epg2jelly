@@ -1291,7 +1291,10 @@ function getCodecSpecificArgs(useCodec) {
         }
     }
 
-    const useCodec = getVideoCodec();
+    //    const useCodec = getVideoCodec();
+    // tsreadex使用時はQSV/VAAPIの問題を回避するためlibx264に自動フォールバック
+    const useCodec = shouldDeleteTemp ? 'libx264' : getVideoCodec();
+    console.log(`Final video codec selection: ${useCodec}${shouldDeleteTemp ? ' (forced to libx264 for tsreadex stability)' : ''}`);   
     const audioCodec = getAudioCodec();
     const hasLibaribb24 = checkLibaribb24Availability();
 
@@ -1578,4 +1581,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/09/08
+// Time stamp: 2026/09/12
