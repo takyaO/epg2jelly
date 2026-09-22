@@ -165,8 +165,10 @@ make_tvshow_nfo() {
             "$file"
     )
 
-    # genre と network のどちらも空なら処理をスキップ
-    [ -z "$genres" ] && [ -z "$network" ] && return
+    # genre と network のどちらも空なら NFO を作成しない
+    if [ -z "$genres" ] && [ -z "$network" ]; then
+        return 1
+    fi
 
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
@@ -341,31 +343,35 @@ ass2vtt() {
 		rm "$FILE.lwi"
 	fi
 
-	if ! grep -q "映画" tvshow.nfo; then
+    if [ -s "$FILENAME.mp4" ]; then
             folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
-	    if [ -s "$FILENAME.mp4" ]; then	    
-		make_tvshow_nfo "$folder" "$FILENAME.mp4"
+        rm -f tvshow.nfo
+        if make_tvshow_nfo "$folder" "$FILENAME.mp4" && [ -s tvshow.nfo ]; then
+        if ! grep -q "映画" tvshow.nfo; then
 
-		# 1. コピー先のディレクトリパスを定義
-		dst_dir="$OUTDIR/$folder"
-		dst="$dst_dir/tvshow.nfo"
+            # 1. コピー先のディレクトリパスを定義
+            dst_dir="$OUTDIR/$folder"
+            dst="$dst_dir/tvshow.nfo"
 
-		# 2. ディレクトリが存在しない場合は作成
-		if [ ! -d "$dst_dir" ]; then
-                    mkdir -p "$dst_dir"
-		fi
+            # 2. ディレクトリが存在しない場合は作成
+            if [ ! -d "$dst_dir" ]; then
+                        mkdir -p "$dst_dir"
+            fi
 
-		# 3. 既存のファイルをチェックしてマージまたはコピー
-		if [ -f "$dst" ]; then
-                    merge_tvshow_nfo tvshow.nfo "$dst"
-		else
-                    cp tvshow.nfo "$dst"
-		fi
-	    else
-		echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"		
-	    fi
+            # 3. 既存のファイルをチェックしてマージまたはコピー
+            if [ -f "$dst" ]; then
+                        merge_tvshow_nfo tvshow.nfo "$dst"
+            else
+                        cp tvshow.nfo "$dst"
+            fi
         else
             echo "WARNING: tvshow.nfo not moved as it contains 映画"
+        fi
+        else
+        echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"
+        fi
+    else
+        echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"
         fi
 
 	if [ -s "$FILENAME.mp4" ]; then	    
