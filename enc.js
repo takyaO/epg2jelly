@@ -1331,24 +1331,25 @@ function getCodecSpecificArgs(useCodec) {
                 }
 
                 // 字幕抽出
-                let rawAssFile = null;
+                const rawAssFiles = [];
                 const hasSubtitles = hasLibaribb24 && /\[字\]/.test(inputFileName) && !ignoreTags;
                 if (hasSubtitles) {
                     const subtitleStreams = detectSubtitleStreamsInFile(inputFile);
-                    if (subtitleStreams.length > 0) {
-                        rawAssFile = `${workPrefix}_raw.ass`;
+                    for (let i = 0; i < subtitleStreams.length; i++) {
+                        const rawAssFile = `${workPrefix}_raw_${i}.ass`;
                         try {
                             execFileSync(getEnv('FFMPEG'), [
                                 '-hide_banner', '-loglevel', 'error', '-y',
                                 '-fix_sub_duration',
                                 '-i', inputFile,
-                                '-map', `0:${subtitleStreams[0]}`,
+                                '-map', `0:${subtitleStreams[i]}`,
                                 '-c:s', 'ass',
                                 rawAssFile
                             ], { timeout: 120000 });
-                            console.log('Extracted raw ASS:', rawAssFile);
+                            rawAssFiles.push(rawAssFile);
+                            console.log(`Extracted raw ASS stream ${i + 1}:`, rawAssFile);
                         } catch (e) {
-                            console.error('ASS extraction failed:', e.message);
+                            console.error(`ASS extraction failed for stream ${subtitleStreams[i]}:`, e.message);
                         }
                     }
                 }
@@ -1398,9 +1399,12 @@ function getCodecSpecificArgs(useCodec) {
                 await concatenateParts(partFiles, outputFile, metadataArgs, chapterMetaFile);
 
                 // ASS処理
-                if (rawAssFile && fs.existsSync(rawAssFile)) {
-                    const finalAss = `./${inputFileName}.ja.ass`;
-                    processSubtitleFile(rawAssFile, finalAss, segments);
+                for (let i = 0; i < rawAssFiles.length; i++) {
+                    if (fs.existsSync(rawAssFiles[i])) {
+                        const suffix = i === 0 ? '' : `.${i + 1}`;
+                        const finalAss = `./${inputFileName}.ja${suffix}.ass`;
+                        processSubtitleFile(rawAssFiles[i], finalAss, segments);
+                    }
                 }
 
                 // 経過時間計算
@@ -1416,7 +1420,7 @@ function getCodecSpecificArgs(useCodec) {
                     useCodec, 
                     cutSecond: 0, // トリムモードでは適用なし
                     tsreadexUsed: shouldDeleteTemp,
-                    subtitlesIncluded: !!rawAssFile,
+                    subtitlesIncluded: rawAssFiles.length > 0,
                     metadataIncluded: metadataArgs.length > 0,
                     metadataNetwork: metadataNetwork,
                     audioCodec: audioCodec,
@@ -1428,7 +1432,7 @@ function getCodecSpecificArgs(useCodec) {
                 // === クリーンアップ ===
                 for (const f of partFiles) { try { fs.unlinkSync(f); } catch(e){} }
                 try { fs.unlinkSync(concatListFile); } catch(e){}
-                if (rawAssFile) { try { fs.unlinkSync(rawAssFile); } catch(e){} }
+                for (const rawAssFile of rawAssFiles) { try { fs.unlinkSync(rawAssFile); } catch(e){} }
                 if (chapterMetaFile) { try { fs.unlinkSync(chapterMetaFile); } catch(e){} }
                 if (shouldDeleteTemp && tempCleanFile) { try { fs.unlinkSync(tempCleanFile); } catch(e){} }
                 
