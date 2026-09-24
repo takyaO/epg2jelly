@@ -137,7 +137,8 @@ extractProgram() {
             -e 's/^土曜プレミアム・映画[[:space:]]*//' \
             -e 's/^ドラマ[[:space:]]*//' \
             -e 's/^.*テレビ[^[:space:]]*ドラマ[[:space:]]*//' \
-            -e 's/^.*曜劇場[[:space:]]*//'
+                -e 's/^.*曜劇場[[:space:]]*//' \
+                -e 's/__S.*$//'
     )
 
     found_delimiter=""
