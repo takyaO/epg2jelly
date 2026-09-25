@@ -42,7 +42,7 @@ LIST_FILE="mvjf.list"
 # --------------------------------------------------
 # 番組名リストとの照合・自動登録から除外する一般語リスト
 # --------------------------------------------------
-GENERIC_WORDS=("ニュース" "気象情報")
+GENERIC_WORDS=("ニュース" "気象情報" "天気予報")
 
 # 一般語判定関数
 is_generic_word() {
@@ -60,6 +60,14 @@ is_generic_word() {
 if [ ! -f "$LIST_FILE" ]; then
     echo "#番組フォルダ名として優先される番組名のリスト。Program names to be used as folder names" > "$LIST_FILE"
 fi
+
+is_ignored_list_entry() {
+    local line="$1"
+    [[ -z "$line" ]] && return 0
+    [[ "$line" =~ ^[[:space:]]*$ ]] && return 0
+    [[ "$line" =~ ^[[:space:]]*# ]] && return 0
+    return 1
+}
 
 extractProgram() {
     # 引数受け取り
@@ -222,7 +230,7 @@ max_len=-1 # マッチした文字列の最大長を保存
 
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
-        if [ -n "$existing" ]; then
+        if ! is_ignored_list_entry "$existing"; then
             pos=-1
             len="${#existing}"
 
@@ -262,7 +270,7 @@ if [ -z "$matched_folder" ]; then
         if [ -f "$LIST_FILE" ]; then
             max_match_len=-1
             while IFS= read -r existing; do
-                if [ -n "$existing" ]; then
+                if ! is_ignored_list_entry "$existing"; then
                     if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
                         len="${#existing}"
                         # ここでも最長一致を採用（breakせずに最後までリストを見る）
