@@ -920,6 +920,9 @@ const LANGUAGE_KEYWORDS = [
 
 function determineAudioLanguages(audioStreams, fileName) {
     const isBilingual = /\[二\]/.test(fileName);
+    const isExplanation = /\[解\]/.test(fileName);
+    const isMultiAudio = /\[多\]/.test(fileName);
+    const isSecondary = /\[副\]/.test(fileName);
     const languageMap = {};
     for (const stream of audioStreams) {
         if (stream.language) {
@@ -932,6 +935,8 @@ function determineAudioLanguages(audioStreams, fileName) {
         if (lowerText.includes('jpn') || lowerText.includes('japanese') || lowerText.includes('日本語') || lowerText.includes('主') || lowerText.includes('メイン')) return 'jpn';
         if (lowerText.includes('副') || lowerText.includes('解説') || lowerText.includes('comm') || lowerText.includes('comment')) return 'jpn';
         if (lowerText.includes('eng') || lowerText.includes('english') || lowerText.includes('英語') || lowerText.includes('英')) return 'eng';
+        if (/\[二\]/.test(text)) return 'eng';
+        if (/\[解\]/.test(text)) return 'jpn';
         for (const lang of LANGUAGE_KEYWORDS) {
             if (lang.patterns.some(pattern => pattern.test(lowerText))) return lang.code;
         }
@@ -945,13 +950,14 @@ function determineAudioLanguages(audioStreams, fileName) {
     }
     const untaggedStreams = audioStreams.filter(stream => !languageMap[stream.index]);
     if (untaggedStreams.length > 0) {
-        if (isBilingual && audioStreams.length >= 2) {
+        if (audioStreams.length >= 2 && (isBilingual || isExplanation || isMultiAudio || isSecondary)) {
             const mainStream = untaggedStreams.find(stream => stream.index === Math.min(...untaggedStreams.map(s => s.index)));
             const secondaryStream = untaggedStreams.find(stream => stream.index === Math.max(...untaggedStreams.map(s => s.index)));
             if (mainStream) languageMap[mainStream.index] = 'jpn';
             if (secondaryStream && secondaryStream !== mainStream) {
                 const inferredFromFileName = detectLanguage(fileName);
-                languageMap[secondaryStream.index] = inferredFromFileName || 'eng';
+                const defaultSecondaryLanguage = isBilingual ? 'eng' : 'jpn';
+                languageMap[secondaryStream.index] = inferredFromFileName || defaultSecondaryLanguage;
             }
         } else {
             for (const stream of untaggedStreams) {
