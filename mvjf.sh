@@ -1,4 +1,18 @@
 #!/bin/bash
+
+# --- 環境変数のロード ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/env.sh"
+
+if [ -f "$ENV_FILE" ]; then
+    source "$ENV_FILE"
+else
+    echo "Error: env.sh not found at $ENV_FILE"
+    exit 1
+fi
+
+DEBUG_NTFY=false # ntfy通知のデバッグ時のみ true にする
+
 DRY_RUN=false
 while getopts ":n" opt; do
     case ${opt} in
@@ -309,6 +323,9 @@ else
         if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
             echo "$PROGRAM" >> "$LIST_FILE"
             echo "Added program name to $LIST_FILE: $PROGRAM"
+            if [ "$DEBUG_NTFY" = "true" ] && [ -n "${NTFY_URL:-}" ]; then
+                curl -H "X-Priority: 3" -d "Added program name to $LIST_FILE: $PROGRAM" "$NTFY_URL"
+            fi
         else
             echo "Used program name listed in $LIST_FILE: $PROGRAM"
         fi
