@@ -263,138 +263,144 @@ ass2vtt() {
 "$WORKDIR/toprocess.py" | while IFS= read -r FILE; do
     cd "$SOURCEDIR"
     if [ -f "$FILE" ]; then
-	start_time=$(date +%s)
+        start_time=$(date +%s)
         FILENAME=${FILE%.*}
         GRSTRING=$(echo "$FILENAME" | sed -n 's/.*\(GR[0-9][0-9]\).*/\1/p')
 
         cd "$WORKDIR"
-	chkdrp_status=0
-	if [ "${CHKDRP}" != "false"  ]; then
+        chkdrp_status=0
+        if [ "${CHKDRP}" != "false" ]; then
             ./chkdrp.sh "$SOURCEDIR/$FILE"
             chkdrp_status=$?
-	fi
-	./epg.sh "$FILE" > epg.json
-    
-	# Trim(CMカット)の対象番組かどうかの判定
-	if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
+        fi
+        ./epg.sh "$FILE" > epg.json
         
+        # Trim(CMカット)の対象番組かどうかの判定
+        if [ "${CMCUT}" != "false" ] && [ "$GRSTRING" != "$NHK1" ] && [ "$GRSTRING" != "$NHK2" ]; then
+            
             TARGET_TS="$SOURCEDIR/$FILE"
             CLEANED_TS=""
-        
+            
             # エラーが検出された場合
             if [ $chkdrp_status -ne 0 ]; then
-		echo "Critical errors detected. Running tsreadex to clean streams..."
-		CLEANED_TS="${FILE}"
-            
-		#-x 18/38/39: EITなどのテーブルを除外, -n -1: 全サービスを保持
-		tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 -d 13 "$TARGET_TS" > "$CLEANED_TS"
-		
-		if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
+                echo "Critical errors detected. Running tsreadex to clean streams..."
+                CLEANED_TS="${FILE}"
+                
+                #-x 18/38/39: EITなどのテーブルを除外, -n -1: 全サービスを保持
+                tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 -d 13 "$TARGET_TS" > "$CLEANED_TS"
+                
+                if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
                     TARGET_TS="$CLEANED_TS"
                     echo "tsreadex completed. Using cleaned TS for Trim processing."
-		else
+                else
                     echo "Warning: tsreadex failed or output empty. Falling back to original TS."
                     notify 4 "Error: tsreadex failed: $FILENAME"
                     rm -f "$CLEANED_TS"
                     CLEANED_TS=""
-		fi
+                fi
             fi
 
             echo "Start trim processing $(basename "$TARGET_TS")"
             jls "$TARGET_TS" chap_out.txt jls_out.txt
             if [ $? -eq 0 ]; then
-		# 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
-		ulimit -v 4089446                
-		./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
+                # 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
+                ulimit -v 4089446                
+                ./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
                     echo "Error: enc.js failed in trim mode" >&2
                     notify 4 "Error: enc.js failed in trim mode: $FILENAME"
-		}
+                }
             else
-		notify 4 "Error: jls failed: $FILENAME"
+                notify 4 "Error: jls failed: $FILENAME"
             fi
-        
+            
             # 処理が終わったら tsreadex で生成した一時ファイルをクリーンアップ
             if [ -n "$CLEANED_TS" ] && [ -f "$CLEANED_TS" ]; then
-		rm -f "$CLEANED_TS"
+                rm -f "$CLEANED_TS"
             fi
-	    
-	    # Trim対象外 (NHKなど)
-	else
+            
+        # Trim対象外 (NHKなど)
+        else
             echo "Start processing $FILE "
             chapter "$SOURCEDIR/$FILE" chap_out.txt
             if [ $? -eq 0 ]; then 
-		./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt|| {
+                ./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt|| {
                     echo "Error: enc.js failed with chap_out.txt" >&2
                     notify 4 "Error: enc.js failed with chap_out.txt: $FILENAME"
-		}
+                }
             else
-		notify 3 "Error: chapter failed: $FILENAME"
-		./enc.js "$SOURCEDIR/$FILE" epg.json || {
+                notify 3 "Error: chapter failed: $FILENAME"
+                ./enc.js "$SOURCEDIR/$FILE" epg.json || {
                     echo "Error: enc.js failed" >&2
                     notify 4 "Error: enc.js failed: $FILENAME"
-		}
+                }
             fi
-	fi
+        fi
 
-	if [ -e "$SOURCEDIR/$FILE.lwi" ]; then
-		rm "$SOURCEDIR/$FILE.lwi"
-	fi
-	if [ -e "$FILE.lwi" ]; then
-		rm "$FILE.lwi"
-	fi
+        if [ -e "$SOURCEDIR/$FILE.lwi" ]; then
+            rm "$SOURCEDIR/$FILE.lwi"
+        fi
+        if [ -e "$FILE.lwi" ]; then
+            rm "$FILE.lwi"
+        fi
 
-    if [ -s "$FILENAME.mp4" ]; then
-            folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p') #mvjf.sh のDRY_RUN=trueの出力を使用
-        rm -f tvshow.nfo
-        if make_tvshow_nfo "$folder" "$FILENAME.mp4" && [ -s tvshow.nfo ]; then
-        if ! grep -q "映画" tvshow.nfo; then
-
-            # 1. コピー先のディレクトリパスを定義
-            dst_dir="$OUTDIR/$folder"
-            dst="$dst_dir/tvshow.nfo"
-
-            # 2. ディレクトリが存在しない場合は作成
-            if [ ! -d "$dst_dir" ]; then
-                        mkdir -p "$dst_dir"
-            fi
-
-            # 3. 既存のファイルをチェックしてマージまたはコピー
-            if [ -f "$dst" ]; then
-                        merge_tvshow_nfo tvshow.nfo "$dst"
+        # --- ファイル移動および NFO 生成処理 ---
+        if [ -s "$FILENAME.mp4" ]; then
+            # 1. mvjf.sh を Dry-Run（-n）で1回だけ呼び出し、振分先フォルダ名を取得
+            folder=$(./mvjf.sh -n "$FILENAME.mp4" | sed -n 's/^Using folder name: //p')
+            
+            if [ -n "$folder" ]; then
+                dst_dir="$OUTDIR/$folder"
             else
-                        cp tvshow.nfo "$dst"
+                dst_dir="$OUTDIR"
             fi
-        else
-            echo "WARNING: tvshow.nfo not moved as it contains 映画"
-        fi
-        else
-        echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"
-        fi
-    else
-        echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"
-        fi
+            mkdir -p "$dst_dir"
 
-	if [ -s "$FILENAME.mp4" ]; then	    
-	    ./mvjf.sh "$FILENAME.mp4" "$OUTDIR"
-	    notify 2 "mp4 created: $FILENAME"
-	    if [ -f "$FILENAME.ja.ass" ]; then
-		ass2vtt "$FILENAME.ja.ass" "$FILENAME.ja.vtt"
-		./mvjf.sh "$FILENAME.ja.ass" "$OUTDIR"
-		./mvjf.sh "$FILENAME.ja.vtt" "$OUTDIR"
-	    fi		    
-	else
-	    echo "Error: mp4 not created" >&2
-	    notify 4 "Error: mp4 not created: $FILENAME"
-	fi
+            # 2. tvshow.nfo の作成と配置
+            rm -f tvshow.nfo
+            if make_tvshow_nfo "$folder" "$FILENAME.mp4" && [ -s tvshow.nfo ]; then
+                if ! grep -q "映画" tvshow.nfo; then
+                    dst="$dst_dir/tvshow.nfo"
+                    if [ -f "$dst" ]; then
+                        merge_tvshow_nfo tvshow.nfo "$dst"
+                    else
+                        cp tvshow.nfo "$dst"
+                    fi
+                else
+                    echo "WARNING: tvshow.nfo not moved as it contains 映画"
+                fi
+            else
+                echo "WARNING: tvshow.nfo not created for $FILENAME.mp4"
+            fi
+
+            # 3. 字幕ファイルの作成（ASS -> VTT）
+            if [ -f "$FILENAME.ja.ass" ]; then
+                ass2vtt "$FILENAME.ja.ass" "$FILENAME.ja.vtt"
+            fi
+
+            # 4. mv コマンドでファイルを直接移動（mvjf.sh の再実行を回避）
+            mv "$FILENAME.mp4" "$dst_dir/"
+            notify 2 "mp4 created: $FILENAME"
+
+            if [ -f "$FILENAME.ja.ass" ]; then
+                mv "$FILENAME.ja.ass" "$dst_dir/"
+            fi
+            if [ -f "$FILENAME.ja.vtt" ]; then
+                mv "$FILENAME.ja.vtt" "$dst_dir/"
+            fi
+
+        else
+            echo "Error: mp4 not created" >&2
+            notify 4 "Error: mp4 not created: $FILENAME"
+        fi
 
         ./processed.py "$FILE" || true
-	end_time=$(date +%s)
-	duration=$((end_time - start_time))
-	minutes=$((duration / 60))
-	seconds=$((duration % 60))
-	echo "RUN TIME; $minutes min $seconds sec"
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        minutes=$((duration / 60))
+        seconds=$((duration % 60))
+        echo "RUN TIME; $minutes min $seconds sec"
     fi
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/08/12
+# Time stamp: 2026/09/27
