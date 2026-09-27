@@ -91,8 +91,8 @@ extractProgram() {
     local -a delimiter_order MATCH_LIST
     local -A delimiter_pairs
 
-    # 区切り文字の優先順位リスト
-    delimiter_order=("＃" "♯" "#" "第" "EP" "Ep" "ep" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『"　" " " " "_" "[")
+    # 区切り文字の優先順位リスト（全角スペースをダブルクォートで確実に保護）
+    delimiter_order=("＃" "♯" "#" "第" "EP" "Ep" "ep" "最終回" "最終話" "最終首" "(" "（" "話"  "★" "☆" "▼" "◆"  "▽" "【" "「" "『" "　" " " "_" "[")
 
     # 区切り文字と対応するセカンドデリミタを定義
     delimiter_pairs=(
@@ -114,8 +114,8 @@ extractProgram() {
         ["▼"]="_"
         ["▽"]="_"
         ["◆"]="_"
-        [" "]="_"
         ["　"]="_"
+        [" "]="_"
         ["【"]="】"
         ["「"]="」"
         ["『"]="』"
@@ -233,6 +233,16 @@ extractProgram() {
     echo "$PROGRAM"
 }
 
+# --------------------------------------------------
+# 照合用：全角英数字を半角化し、全角・半角スペースを削除する関数
+# --------------------------------------------------
+normalize_str() {
+    local input="$1"
+    printf '%s' "$input" | sed \
+        -e 'y/０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/' \
+        -e 's/[[:space:] ]//g'
+}
+
 base="$(basename "$input_file")"
 matched_folder=""
 
@@ -242,18 +252,22 @@ matched_folder=""
 min_pos=-1 # 最小の出現位置を保存（-1は未設定）
 max_len=-1 # マッチした文字列の最大長を保存
 
+clean_base=$(normalize_str "$base")
+
 if [ -f "$LIST_FILE" ]; then
     while IFS= read -r existing; do
         if ! is_ignored_list_entry "$existing"; then
+            clean_existing=$(normalize_str "$existing")
+
             pos=-1
             len="${#existing}"
 
-            # パターン1: $base の中に $existing が含まれる場合
-            if [[ "$base" == *"$existing"* ]]; then
-                prefix="${base%%"$existing"*}"
+            # パターン1: $clean_base の中に $clean_existing が含まれる場合
+            if [[ "$clean_base" == *"$clean_existing"* ]]; then
+                prefix="${clean_base%%"$clean_existing"*}"
                 pos="${#prefix}"
-            # パターン2: $existing の中に $base が含まれる場合
-            elif [[ "$existing" == *"$base"* ]]; then
+            # パターン2: $clean_existing の中に $clean_base が含まれる場合
+            elif [[ "$clean_existing" == *"$clean_base"* ]]; then
                 pos=0
             fi
 
@@ -266,7 +280,7 @@ if [ -f "$LIST_FILE" ]; then
                 if [[ $min_pos -eq -1 ]] || [[ $pos -lt $min_pos ]] || ( [[ $pos -eq $min_pos ]] && [[ $len -gt $max_len ]] ); then
                     min_pos=$pos
                     max_len=$len
-                    matched_folder="$existing"
+                    matched_folder="$existing" # フォルダ名にはリストに載っている元の表記を採用
                 fi
             fi
         fi
@@ -283,14 +297,19 @@ if [ -z "$matched_folder" ]; then
     if ! is_generic_word "$PROGRAM"; then
         if [ -f "$LIST_FILE" ]; then
             max_match_len=-1
+            
+            clean_prog=$(normalize_str "$PROGRAM")
+
             while IFS= read -r existing; do
                 if ! is_ignored_list_entry "$existing"; then
-                    if [[ "$PROGRAM" == *"$existing"* ]] || [[ "$existing" == *"$PROGRAM"* ]]; then
+                    clean_existing=$(normalize_str "$existing")
+
+                    if [[ "$clean_prog" == *"$clean_existing"* ]] || [[ "$clean_existing" == *"$clean_prog"* ]]; then
                         len="${#existing}"
                         # ここでも最長一致を採用（breakせずに最後までリストを見る）
                         if [[ $len -gt $max_match_len ]]; then
                             max_match_len=$len
-                            matched_folder="$existing"
+                            matched_folder="$existing" # フォルダ名にはリストに載っている元の表記を採用
                         fi
                     fi
                 fi
@@ -335,4 +354,4 @@ else
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/09/10
+#Time stamp: 2026/09/27
