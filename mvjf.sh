@@ -11,7 +11,7 @@ else
     exit 1
 fi
 
-DEBUG_NTFY=false # ntfy通知のデバッグ時のみ true にする
+DEBUG_NTFY=true # ntfy通知のデバッグ時のみ true にする
 
 DRY_RUN=false
 while getopts ":n" opt; do
@@ -114,8 +114,8 @@ extractProgram() {
         ["▼"]="_"
         ["▽"]="_"
         ["◆"]="_"
-        ["　"]="_"
         [" "]="_"
+        ["　"]="_"
         ["【"]="】"
         ["「"]="」"
         ["『"]="』"
@@ -324,6 +324,8 @@ fi
 
 # 最終的なディレクトリパス
 final_dir="$outdir/$PROGRAM"
+
+# ファイル移動処理（DRY_RUN 時は通知用の出力のみ行う）
 if [ "$DRY_RUN" = "true" ]; then
     echo "Using folder name: $PROGRAM"
 else
@@ -336,22 +338,22 @@ else
         exit 1
     }
     echo "File moved successfully: mv '$input_file' '$final_dir' "
+fi
 
-    # 一般語の場合は mvjf.list への書き込みもスキップする
-    if ! is_generic_word "$PROGRAM"; then
-        if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
-            echo "$PROGRAM" >> "$LIST_FILE"
-            echo "Added program name to $LIST_FILE: $PROGRAM"
-            if [ "$DEBUG_NTFY" = "true" ] && [ -n "${NTFY_URL:-}" ]; then
-                curl -H "X-Priority: 3" -d "Added program name to $LIST_FILE: $PROGRAM" "$NTFY_URL"
-            fi
-        else
-            echo "Used program name listed in $LIST_FILE: $PROGRAM"
+# mvjf.list への書き込みと ntfy 通知（DRY_RUN の場合でも実行）
+if ! is_generic_word "$PROGRAM"; then
+    if ! grep -qxF "$PROGRAM" "$LIST_FILE"; then
+        echo "$PROGRAM" >> "$LIST_FILE"
+        echo "Added program name to $LIST_FILE: $PROGRAM"
+        if [ "$DEBUG_NTFY" = "true" ] && [ -n "${NTFY_URL:-}" ]; then
+            curl -H "X-Priority: 3" -d "Added program name to $LIST_FILE: $PROGRAM" "$NTFY_URL"
         fi
     else
-        echo "Used generic program name (skipped $LIST_FILE update): $PROGRAM"
+        echo "Used program name listed in $LIST_FILE: $PROGRAM"
     fi
+else
+    echo "Used generic program name (skipped $LIST_FILE update): $PROGRAM"
 fi
 
 #https://note.com/leal_walrus5520/n/n8ae31f665314
-#Time stamp: 2026/09/27
+#Time stamp: 2026/09/29
