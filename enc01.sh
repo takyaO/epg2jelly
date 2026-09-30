@@ -300,19 +300,25 @@ ass2vtt() {
                 fi
             fi
 
-            echo "Start trim processing $(basename "$TARGET_TS")"
+	    echo "Start trim processing $(basename "$TARGET_TS")"
             jls "$TARGET_TS" chap_out.txt jls_out.txt
             if [ $? -eq 0 ]; then
                 # 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
                 ulimit -v 4089446                
                 ./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
-                    echo "Error: enc.js failed in trim mode" >&2
-                    notify 4 "Error: enc.js failed in trim mode: $FILENAME"
+                    echo "Error: enc.js failed in trim mode. Falling back to normal mode..." >&2
+                    notify 3 "Warning: enc.js failed in trim mode, falling back: $FILENAME"
+
+                    # フォールバック処理: Trimモード失敗時に通常モード処理を実行
+                    ./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt || {
+                        echo "Error: enc.js failed in fallback normal mode" >&2
+                        notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+                    }
                 }
             else
                 notify 4 "Error: jls failed: $FILENAME"
             fi
-            
+	    
             # 処理が終わったら tsreadex で生成した一時ファイルをクリーンアップ
             if [ -n "$CLEANED_TS" ] && [ -f "$CLEANED_TS" ]; then
                 rm -f "$CLEANED_TS"
@@ -324,10 +330,16 @@ ass2vtt() {
             chapter "$SOURCEDIR/$FILE" chap_out.txt
             if [ $? -eq 0 ]; then 
                 ./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt|| {
-                    echo "Error: enc.js failed with chap_out.txt" >&2
-                    notify 4 "Error: enc.js failed with chap_out.txt: $FILENAME"
+                    echo "Warning: enc.js failed with chap_out.txt" >&2
+                    notify 3 "Warning: enc.js failed with chap_out.txt, falling back: $FILENAME"
+
+                    # フォールバック処理: 通常モード処理を実行
+                    ./enc.js "$SOURCEDIR/$FILE" epg.json || {
+                        echo "Error: enc.js failed in fallback normal mode" >&2
+                        notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+		    }
                 }
-            else
+	    else
                 notify 3 "Error: chapter failed: $FILENAME"
                 ./enc.js "$SOURCEDIR/$FILE" epg.json || {
                     echo "Error: enc.js failed" >&2
@@ -403,4 +415,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/09/27
+# Time stamp: 2026/09/30
