@@ -287,7 +287,7 @@ ass2vtt() {
                 CLEANED_TS="${FILE}"
                 
                 #-x 18/38/39: EITなどのテーブルを除外, -n -1: 全サービスを保持
-                tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 -d 13 "$TARGET_TS" > "$CLEANED_TS"
+                tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 "$TARGET_TS" > "$CLEANED_TS"
                 
                 if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
                     TARGET_TS="$CLEANED_TS"
