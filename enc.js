@@ -1015,33 +1015,74 @@ function parseTrimFile(filePath) {
 }
 
 /**
-* raw ASS（ffmpeg -map 0:N -c:s ass で抽出したもの）の時刻基準を補正する秒数を返す。
-* ffmpegは字幕ストリーム単独で抽出すると「字幕の最初のパケットのPTS」を0秒とするため、
-* 映像・音声（コンテナ開始=start_time基準）とずれる。
-*   shift = (字幕ストリームの最初のパケットPTS) - (コンテナのstart_time)
-* これを全Dialogueの開始・終了に加算すると、映像・音声と同じ時間軸になる。
+* raw ASS（ffmpeg -map 0:N -c:s ass で抽出したもの）の0秒が、映像・音声の時間軸
+* （コンテナstart_time基準）に対して何秒ずれているかを返す。全Dialogueに加算して使う。
+*
+* ffmpegが字幕単独抽出で使う0秒の基準は録画ごとに異なる
+*   ・字幕ストリームの最初のパケットのPTS（例: ピンネタ）
+*   ・コンテナstart_time（例: ダイヤのA）
+* ため、固定の式では合わない。そこで実測する:
+*   shift = (最初にデコードされた字幕のPTS - コンテナstart_time) - (raw ASSの最初のDialogue開始時刻)
+* 実測できない場合のみ、従来式 shift = 最初の字幕パケットPTS - コンテナstart_time にフォールバックする。
 */
-function getSubtitleTimeShift(filePath, streamIndex) {
+function getFirstDialogueStart(assPath) {
     try {
-        const run = (extra) => execFileSync(getEnv('FFPROBE'), [
-            '-v', 'error', ...getAnalyze(), ...extra, filePath
-        ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        const line = fs.readFileSync(assPath, 'utf8').split('\n').find(l => l.startsWith('Dialogue:'));
+        if (!line) return null;
+        const parts = line.split(',');
+        return parts.length >= 10 ? parseAssTime(parts[1]) : null;
+    } catch (e) {
+        return null;
+    }
+}
 
+function getSubtitleTimeShift(filePath, streamIndex, rawAssPath) {
+    const run = (extra) => execFileSync(getEnv('FFPROBE'), [
+        '-v', 'error', ...getAnalyze(), ...extra, filePath
+    ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+
+    try {
         const containerStart = parseFloat(run(['-show_entries', 'format=start_time', '-of', 'default=nw=1:nk=1']));
-        const firstPktLine = run([
-            '-select_streams', String(streamIndex),
-            '-show_entries', 'packet=pts_time',
-            '-read_intervals', '%+#1',
-            '-of', 'csv=p=0'
-        ]).split('\n')[0];
-        const firstSubPts = parseFloat(firstPktLine);
-
-        if (!Number.isFinite(containerStart) || !Number.isFinite(firstSubPts)) {
-            console.warn(`Subtitle shift: could not determine (containerStart=${containerStart}, firstSubPts=${firstSubPts}); using 0`);
+        if (!Number.isFinite(containerStart)) {
+            console.warn('Subtitle shift: container start_time unavailable; using 0');
             return 0;
         }
-        const shift = firstSubPts - containerStart;
-        console.log(`Subtitle time shift for stream ${streamIndex}: ${shift.toFixed(3)}s (firstSubPkt=${firstSubPts}, containerStart=${containerStart})`);
+
+        // 実測: 最初にデコードされた字幕フレームのPTSと、raw ASSの最初のDialogueを突き合わせる
+        let measured = null;
+        try {
+            const firstAssStart = rawAssPath ? getFirstDialogueStart(rawAssPath) : null;
+            const frameOut = run([
+                '-select_streams', String(streamIndex),
+                '-show_frames', '-show_entries', 'frame=pts_time',
+                '-read_intervals', '%+120',
+                '-of', 'compact'
+            ]);
+            const m = frameOut.match(/pts_time=(\d+(?:\.\d+)?)/);
+            if (m && firstAssStart !== null) {
+                const v = (parseFloat(m[1]) - containerStart) - firstAssStart;
+                if (Number.isFinite(v) && v > -1) measured = v;
+            }
+        } catch (e) {
+            console.warn(`Subtitle shift: measurement failed (${e.message})`);
+        }
+
+        // 従来式
+        let formula = null;
+        try {
+            const firstSubPts = parseFloat(run([
+                '-select_streams', String(streamIndex),
+                '-show_entries', 'packet=pts_time',
+                '-read_intervals', '%+#1',
+                '-of', 'csv=p=0'
+            ]).split('\n')[0]);
+            if (Number.isFinite(firstSubPts)) formula = firstSubPts - containerStart;
+        } catch (e) { /* ignore */ }
+
+        const shift = measured !== null ? measured : (formula !== null ? formula : 0);
+        console.log(`Subtitle time shift for stream ${streamIndex}: ${shift.toFixed(3)}s ` +
+            `(${measured !== null ? 'measured' : 'fallback'}; measured=${measured === null ? 'n/a' : measured.toFixed(3)}, ` +
+            `firstPacketFormula=${formula === null ? 'n/a' : formula.toFixed(3)}, containerStart=${containerStart})`);
         return shift;
     } catch (e) {
         console.warn(`Subtitle shift detection failed for stream ${streamIndex}: ${e.message}; using 0`);
@@ -1396,7 +1437,7 @@ function getCodecSpecificArgs(useCodec) {
                                 rawAssFile
                             ], { timeout: 120000 });
                             rawAssFiles.push(rawAssFile);
-                            rawAssShifts.push(getSubtitleTimeShift(inputFile, subtitleStreams[i]));
+                            rawAssShifts.push(getSubtitleTimeShift(inputFile, subtitleStreams[i], rawAssFile));
                             console.log(`Extracted raw ASS stream ${i + 1}:`, rawAssFile);
                         } catch (e) {
                             console.error(`ASS extraction failed for stream ${subtitleStreams[i]}:`, e.message);
@@ -1635,4 +1676,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/10/03
+// Time stamp: 2026/10/04
