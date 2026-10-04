@@ -306,13 +306,17 @@ ass2vtt() {
                 # 3.9GB を KB 単位に換算 (3.9 * 1024 * 1024 = 4089446); 暴走防止策
                 ulimit -v 4089446                
                 ./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
-                    echo "Error: enc.js failed in trim mode. Falling back to normal mode..." >&2
+                    echo "Warning: enc.js failed in trim mode. Falling back to safe mode..." >&2
                     notify 3 "Warning: enc.js failed in trim mode, falling back: $FILENAME"
 
-                    # フォールバック処理: Trimモード失敗時に通常モード処理を実行
-                    ./enc.js "$SOURCEDIR/$FILE" epg.json chap_out.txt || {
-                        echo "Error: enc.js failed in fallback normal mode" >&2
-                        notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+                    ./enc.js --safe-mode "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {		    
+                        echo "Warning: enc.js failed in fallback safe mode" >&2
+                        notify 3 "Warning: enc.js failed in fallback safe mode: $FILENAME"
+
+			./enc.js "$TARGET_TS" epg.json chap_out.txt  || {		    
+                            echo "Error: enc.js failed in fallback normal mode" >&2
+                            notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+			}
                     }
                 }
             else
@@ -415,4 +419,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/09/30
+# Time stamp: 2026/10/03

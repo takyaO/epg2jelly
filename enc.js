@@ -100,6 +100,7 @@ function executeTsreadex(inputPath, programId, outputPath) {
 // コマンドライン引数の解析
 const args = process.argv.slice(2);
 let ignoreTags = false;
+let safeMode = false;  // --safe-mode: FORCE_CODEC に関わらず libx264 を強制（debug/fallback用）
 let inputFile = null;
 let jsonFilePath = null;
 let audioComponentType = '0';
@@ -111,6 +112,8 @@ const nonOptionArgs = [];
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--ignore-tags') {
         ignoreTags = true;
+    } else if (args[i] === '--safe-mode') {
+        safeMode = true;
     } else {
         nonOptionArgs.push(args[i]);
     }
@@ -263,7 +266,7 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
 }
 
 if (!inputFile) {
-    console.error('Usage: node enc.js [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
+    console.error('Usage: node enc.js [--safe-mode] [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
     console.error('Example: node enc.js /path/to/番組名.m2ts input_file.json');
     console.error('Example with chapters: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt');
     console.error('Example with trim: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt jls_out.txt');
@@ -534,6 +537,10 @@ function isIntelGpuPresent() {
 
 // 利用可能な映像コーデックを決定
 function getVideoCodec() {
+    if (safeMode) {
+        console.log('Safe mode: Forcing libx264 (software encode)');
+        return 'libx264';
+    }
     if (FORCE_CODEC) {
         console.log(`Manual override: Using ${FORCE_CODEC}`);
         return FORCE_CODEC;
@@ -1628,4 +1635,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/10/02
+// Time stamp: 2026/10/03
