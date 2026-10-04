@@ -268,11 +268,6 @@ ass2vtt() {
         GRSTRING=$(echo "$FILENAME" | sed -n 's/.*\(GR[0-9][0-9]\).*/\1/p')
 
         cd "$WORKDIR"
-        chkdrp_status=0
-        if [ "${CHKDRP}" != "false" ]; then
-            ./chkdrp.sh "$SOURCEDIR/$FILE"
-            chkdrp_status=$?
-        fi
         ./epg.sh "$FILE" > epg.json
         
         # Trim(CMカット)の対象番組かどうかの判定
@@ -281,6 +276,11 @@ ass2vtt() {
             TARGET_TS="$SOURCEDIR/$FILE"
             CLEANED_TS=""
             
+            chkdrp_status=0
+            if [ "${CHKDRP}" != "false" ]; then
+		./chkdrp.sh "$SOURCEDIR/$FILE"
+		chkdrp_status=$?
+            fi
             # エラーが検出された場合
             if [ $chkdrp_status -ne 0 ]; then
                 echo "Critical errors detected. Running tsreadex to clean streams..."
@@ -419,4 +419,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/10/03
+# Time stamp: 2026/10/04
