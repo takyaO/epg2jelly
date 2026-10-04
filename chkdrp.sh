@@ -24,9 +24,8 @@ set -e
 #  判定：キーワードの仕分け
 # =================================================================
 
-# 1. 【CRITICAL】デコード不能・処理破綻・ストリーム認識失敗・アボートを示す決定的なパターン
-#CRITICAL_PATTERN="no TS found at (start|end) of file|[0-9]{5,} >= [0-9]{5,}||overread"
-CRITICAL_PATTERN="no TS found at (start|end) of file|[0-9]{5,} >= [0-9]{5,}"
+# 1. 【CRITICAL】デコード不能・処理破綻・ストリーム認識失敗・アボートを示す致命的なパターン
+CRITICAL_PATTERN="no P?TS found at (start|end) of file|[0-9]{5,} >= [0-9]{5,}"
 
 # 2. 【WARN】パケットは壊れているが、FFmpegがスキップして処理を継続できる軽微な警告
 WARN_PATTERN="start time for stream|Could not find codec parameters|Invalid frame dimensions|PES packet size mismatch|Packet corrupt|corrupt decoded frame|Input buffer exhausted"
@@ -54,6 +53,7 @@ EOF
     )
     echo "$MESSAGE"
     notify 4 "$MESSAGE"
+    rm -f "$LOG"
     exit 1
 elif (( COUNT_WARN > 0 )); then
     #  パターン2：軽微な警告あり（通常ドロップ・問題なし）
@@ -65,7 +65,6 @@ EOF
     )
     echo "$MESSAGE"
     notify 1 "$MESSAGE"
-
 else
     #  パターン3：完全正常
     RESULT_STR="SUCCESS"
