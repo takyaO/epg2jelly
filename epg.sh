@@ -11,7 +11,7 @@ if [ -z "$TARGET_NAME" ]; then
   exit 0
 fi
 
-# 1. APIからチャンネル情報のJSONを取得（失敗時は空配列 [] を代入）
+# 1. APIからチャンネル情報のJSONを取得（取得失敗時は空配列）
 CHANNELS_JSON=$(curl -sf -X 'GET' "$CHANNELS_URL" -H 'accept: application/json' 2>/dev/null)
 if ! echo "$CHANNELS_JSON" | jq -e . >/dev/null 2>&1; then
   CHANNELS_JSON="[]"
@@ -19,12 +19,12 @@ fi
 
 # 2. 録画情報を取得し、jq内でチャンネル情報と照合して置換する
 curl -sf -X 'GET' "$RECORDED_URL" 2>/dev/null | \
-jq -r --arg filename "$TARGET_NAME" --argjson channels "$CHANNELS_JSON" '
-  # チャンネルマップ作成（channelsが配列でない場合や空の場合も安全に処理）
-  (($channels | try map({key: (.id | tostring), value: .name}) | from_entries) catch {}) as $cmap
-  
-  # 本処理: .records が存在しない、null、エラーレスポンスの場合は何も出力しない
-  | (.records? // [])[]? 
-  | select(.videoFiles?[0]?.filename == $filename)
+jq --arg filename "$TARGET_NAME" --argjson channels "$CHANNELS_JSON" '
+  # 準備: チャンネルIDをキー、放送局名を値とする辞書(オブジェクト)を作成
+  ($channels | map({key: (.id | tostring), value: .name}) | from_entries) as $cmap
+
+  # 本処理: 対象の番組を抽出し、channelIdを放送局名で上書きする
+  | (.records? // [])[]?
+  | select(.videoFiles[0].filename == $filename)
   | .channelId = ($cmap[.channelId | tostring] // .channelId)
 ' 2>/dev/null
