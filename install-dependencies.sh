@@ -46,17 +46,34 @@ install_packages() {
     "${SUDO[@]}" apt-get install -y --no-install-recommends "$@"
 }
 
+# APTに導入可能な候補バージョンがあるか確認する。
+apt_has_candidate() {
+    local candidate
+    candidate="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
+    [[ -n "$candidate" && "$candidate" != '(none)' ]]
+}
+
 detect_gpu() {
-    local vendor
-    for vendor in /sys/class/drm/card[0-9]*/device/vendor; do
-        [[ -r "$vendor" ]] || continue
-        case "$(cat "$vendor")" in
-            0x8086) printf 'intel\n'; return ;;
-            0x1002) printf 'amd\n'; return ;;
-            0x10de) printf 'nvidia\n'; return ;;
+    # 複数GPU環境(iGPU+dGPUなど)でも探索順に依存しないよう、全カードを確認して
+    # Intel > AMD > NVIDIA の優先順位で1つ選ぶ。
+    local vendor_file has_intel=no has_amd=no has_nvidia=no
+    for vendor_file in /sys/class/drm/card[0-9]*/device/vendor; do
+        [[ -r "$vendor_file" ]] || continue
+        case "$(cat "$vendor_file" 2>/dev/null || true)" in
+            0x8086) has_intel=yes ;;
+            0x1002) has_amd=yes ;;
+            0x10de) has_nvidia=yes ;;
         esac
     done
-    printf 'unknown\n'
+    if [[ "$has_intel" == yes ]]; then
+        printf 'intel\n'
+    elif [[ "$has_amd" == yes ]]; then
+        printf 'amd\n'
+    elif [[ "$has_nvidia" == yes ]]; then
+        printf 'nvidia\n'
+    else
+        printf 'unknown\n'
+    fi
 }
 
 require_interactive
@@ -102,11 +119,15 @@ if [[ "$gpu" == intel && "$hw_mode" == vaapi ]]; then
     read -r -p '選択 [1-2, default 1]: ' intel_driver_choice
     case "${intel_driver_choice:-1}" in
         1) intel_driver_package=intel-media-va-driver ;;
-        2) intel_driver_package=i965-va-driver ;;
+        2)
+            intel_driver_package=i965-va-driver
+            printf '注意: i965世代のGPUはH.264のハードウェアエンコードのみ利用でき、HEVC(hevc_vaapi)のハードウェアエンコードには対応しません。\n'
+            ;;
         *) printf '不正なIntel VAAPIドライバー選択です。\n' >&2; exit 2 ;;
     esac
 fi
-if [[ "$gpu" == intel && "$hw_mode" == intel ]]; then
+if [[ "$gpu" == intel && ( "$hw_mode" == vaapi || "$hw_mode" == intel ) &&
+    "$intel_driver_package" == intel-media-va-driver ]]; then
     if ask_yes_no 'Intel non-free iHD media driverを使いますか? (ライセンス条件を確認してください)' no; then
         intel_driver_package=intel-media-va-driver-non-free
     fi
@@ -132,7 +153,7 @@ packages=(
 )
 case "$hw_mode" in
     vaapi)
-        packages+=(libva-dev v4l-utils)
+        packages+=(libva-dev v4l-utils vainfo)
         if [[ "$gpu" == intel ]]; then
             packages+=("$intel_driver_package")
         elif [[ "$gpu" == amd ]]; then
@@ -143,21 +164,52 @@ case "$hw_mode" in
         fi
         ;;
     intel)
-        packages+=(libva-dev libvpl-dev libvpl2 "$intel_driver_package" v4l-utils)
+        packages+=(libva-dev libvpl-dev libvpl2 libmfx-gen1.2 "$intel_driver_package" v4l-utils vainfo)
         ;;
 esac
 printf '\nAPT依存パッケージを更新・導入します。\n'
 "${SUDO[@]}" apt-get update
+if [[ "$intel_driver_package" == intel-media-va-driver-non-free ]] &&
+    ! apt_has_candidate intel-media-va-driver-non-free; then
+    printf '警告: intel-media-va-driver-non-free がAPTで見つかりません (Debianはnon-free、Ubuntuはmultiverseの有効化が必要です)。\n' >&2
+    printf 'free版の intel-media-va-driver に切り替えて続行します。\n' >&2
+    for i in "${!packages[@]}"; do
+        if [[ "${packages[$i]}" == intel-media-va-driver-non-free ]]; then
+            packages[i]=intel-media-va-driver
+        fi
+    done
+    intel_driver_package=intel-media-va-driver
+fi
 if [[ "$hw_mode" == intel ]]; then
-    vpl_version="$(apt-cache policy libvpl-dev | awk '/Candidate:/ { print $2; exit }')"
-    if [[ -z "$vpl_version" || "$vpl_version" == '(none)' ]] ||
-        ! dpkg --compare-versions "$vpl_version" ge 2.6; then
-        printf '警告: Intel QSVにはlibvpl-dev >= 2.6が必要ですが、APT候補は %s です。\n' "${vpl_version:-取得不可}" >&2
+    for qsv_package in libvpl-dev libvpl2; do
+        if ! apt_has_candidate "$qsv_package"; then
+            printf '警告: Intel QSVに必要なAPTパッケージ %s が見つかりません。\n' "$qsv_package" >&2
+            printf 'QSVビルドは続行できません。使用ディストリビューションの対応パッケージを確認するか、VAAPI/CPUを選択してください。\n' >&2
+            exit 2
+        fi
+    done
+    if ! apt_has_candidate libmfx-gen1.2; then
+        printf '警告: libmfx-gen1.2 (Intel GPUランタイム, Gen12以降向け) がAPTで見つかりません。導入せずに続行します。\n' >&2
+        printf 'Gen12以降のGPUでQSVを使う場合は、対応ランタイムを別途導入してください。\n' >&2
+        qsv_packages=()
+        for i in "${!packages[@]}"; do
+            if [[ "${packages[$i]}" != libmfx-gen1.2 ]]; then
+                qsv_packages+=("${packages[$i]}")
+            fi
+        done
+        packages=("${qsv_packages[@]}")
+    fi
+fi
+install_packages "${packages[@]}"
+if [[ "$hw_mode" == intel ]]; then
+    # libvpl-dev が提供するpkg-config名は vpl (libvpl ではない)。2.6はoneVPLのAPIバージョン。
+    vpl_version="$(pkg-config --modversion vpl 2>/dev/null || true)"
+    if [[ -z "$vpl_version" ]] || ! dpkg --compare-versions "$vpl_version" ge 2.6; then
+        printf '警告: Intel QSVにはoneVPL API 2.6以上(libvpl-dev)が必要ですが、検出結果は %s です。\n' "${vpl_version:-取得不可}" >&2
         printf 'QSVビルドは続行できません。使用ディストリビューションの対応パッケージを確認するか、VAAPI/CPUを選択してください。\n' >&2
         exit 2
     fi
 fi
-install_packages "${packages[@]}"
 
 if [[ "$with_wine" == yes ]]; then
     printf '\nWine 32-bit の安全確認を行います。\n'
@@ -254,9 +306,9 @@ if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
     ffmpeg_options+=(--enable-vaapi)
 fi
 if [[ "$hw_mode" == intel ]]; then
-    vpl_version="$(pkg-config --modversion libvpl)"
+    vpl_version="$(pkg-config --modversion vpl)"
     if ! dpkg --compare-versions "$vpl_version" ge 2.6; then
-        printf 'Intel QSV用libvplのバージョンが古すぎます: %s (必要: >= 2.6)\n' "$vpl_version" >&2
+        printf 'Intel QSV用oneVPL APIのバージョンが古すぎます: %s (必要: >= 2.6)\n' "$vpl_version" >&2
         exit 1
     fi
     ffmpeg_options+=(--enable-libvpl)
@@ -435,5 +487,12 @@ if [[ "$hw_mode" == intel ]]; then
             exit 1
         fi
     done
+fi
+if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
+    printf '\nVAAPI/QSVの利用には /dev/dri/renderD* へのアクセス権が必要です。必要に応じて render (または video) グループへユーザーを追加してください。\n'
+    printf 'ドライバーの認識確認には vainfo を使用できます。\n'
+fi
+if [[ "$hw_mode" == intel ]]; then
+    printf 'libmfx-gen1.2 はIntel Gen12 (Tiger Lake) 以降向けのGPUランタイムです。それより古いIntel GPUでQSVを使う場合はIntel Media SDK系ランタイムが別途必要で、このスクリプトでは導入しません。\n'
 fi
 printf '\nFFmpegのビルド機能を確認しました。実機でエンコードテストしてください。\n'
