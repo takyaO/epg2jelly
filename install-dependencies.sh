@@ -53,6 +53,7 @@ detect_gpu() {
         case "$(cat "$vendor")" in
             0x8086) printf 'intel\n'; return ;;
             0x1002) printf 'amd\n'; return ;;
+            0x10de) printf 'nvidia\n'; return ;;
         esac
     done
     printf 'unknown\n'
@@ -77,11 +78,11 @@ fi
 gpu="$(detect_gpu)"
 default_hw=cpu
 case "$gpu" in
-    intel) default_hw=intel ;;
+    intel) default_hw=vaapi ;;
     amd) default_hw=vaapi ;;
 esac
 printf '検出GPU: %s\n' "$gpu"
-printf 'ハードウェアエンコードの選択:\n  1) 自動推奨 (%s)\n  2) CPUのみ\n  3) VAAPI (Intel/AMD)\n  4) Intel QSV + VAAPI\n' "$default_hw"
+printf 'ハードウェアエンコードの選択:\n  1) 自動推奨 (%s)\n  2) CPUのみ (libx264)\n  3) VAAPI (Intel/AMDなど、対応ドライバーが必要)\n  4) Intel QSV + VAAPI (Intel GPUとlibvpl >= 2.6が必要)\n' "$default_hw"
 read -r -p '選択 [1-4, default 1]: ' hw_choice
 case "${hw_choice:-1}" in
     1) hw_mode="$default_hw" ;;
@@ -91,16 +92,24 @@ case "${hw_choice:-1}" in
     *) printf '不正な選択です。\n' >&2; exit 2 ;;
 esac
 if [[ "$hw_mode" == intel && "$gpu" != intel ]]; then
-    printf 'Intel QSVを選択しましたがIntel GPUを検出できませんでした。VAAPI/CPUへ切り替えるか、QSVの動作確認は手動で行ってください。\n' >&2
+    printf 'Intel QSVにはIntel GPUが必要ですが、検出結果は %s です。CPUまたはVAAPIを選択してください。\n' "$gpu" >&2
+    exit 2
 fi
 
-with_intel_nonfree=no
-if [[ "$gpu" == intel && "$hw_mode" != cpu ]] && ask_yes_no 'Intel non-free media driverを使いますか? (ベンダーのライセンス条件を確認してください)' no; then
-    with_intel_nonfree=yes
-fi
 intel_driver_package=intel-media-va-driver
-if [[ "$with_intel_nonfree" == yes ]]; then
-    intel_driver_package=intel-media-va-driver-non-free
+if [[ "$gpu" == intel && "$hw_mode" == vaapi ]]; then
+    printf 'Intel VAAPIドライバーはGPU世代に合わせて選択してください:\n  1) iHD (Broadwell以降向け、推奨)\n  2) i965 (Ivy Bridge / Haswellなど旧世代向け)\n'
+    read -r -p '選択 [1-2, default 1]: ' intel_driver_choice
+    case "${intel_driver_choice:-1}" in
+        1) intel_driver_package=intel-media-va-driver ;;
+        2) intel_driver_package=i965-va-driver ;;
+        *) printf '不正なIntel VAAPIドライバー選択です。\n' >&2; exit 2 ;;
+    esac
+fi
+if [[ "$gpu" == intel && "$hw_mode" == intel ]]; then
+    if ask_yes_no 'Intel non-free iHD media driverを使いますか? (ライセンス条件を確認してください)' no; then
+        intel_driver_package=intel-media-va-driver-non-free
+    fi
 fi
 with_wine=no
 if ask_yes_no 'Wine 32-bit と winetricks も導入しますか? (APT削除検査を行い、削除があれば導入を中止します)' yes; then
@@ -112,30 +121,42 @@ if [[ "$with_wine" == yes ]] && ask_yes_no 'Wine向け allfonts を導入しま�
 fi
 
 packages=(
-    build-essential cmake ninja-build pkg-config git curl jq bc
+    build-essential cmake ninja-build checkinstall pkg-config git curl jq bc nasm yasm
     nodejs npm python3
     autoconf automake libtool meson
     libmp3lame-dev libopus-dev libvorbis-dev libvpx-dev libx264-dev libx265-dev
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
     libdav1d-dev libaom-dev libass-dev libfreetype6-dev libgnutls28-dev
     libaribb24-dev libatomic-ops-dev libdevil-dev libsoundtouch-dev libxml2-dev
-    libfontconfig1-dev fontconfig libdrm-dev
+    libfontconfig1-dev fontconfig libdrm-dev libfdk-aac-dev
 )
 case "$hw_mode" in
     vaapi)
         packages+=(libva-dev v4l-utils)
         if [[ "$gpu" == intel ]]; then
             packages+=("$intel_driver_package")
-        else
+        elif [[ "$gpu" == amd ]]; then
             packages+=(mesa-va-drivers)
+        else
+            printf '警告: %s GPU向けのVAAPIドライバーは自動選択できません。\n' "$gpu" >&2
+            printf 'GPUベンダー提供のVAAPIエンコード対応ドライバーを別途導入してください。利用できない場合はCPUエンコードを選択してください。\n' >&2
         fi
         ;;
     intel)
-        packages+=(libva-dev libvpl-dev "$intel_driver_package" v4l-utils)
+        packages+=(libva-dev libvpl-dev libvpl2 "$intel_driver_package" v4l-utils)
         ;;
 esac
 printf '\nAPT依存パッケージを更新・導入します。\n'
 "${SUDO[@]}" apt-get update
+if [[ "$hw_mode" == intel ]]; then
+    vpl_version="$(apt-cache policy libvpl-dev | awk '/Candidate:/ { print $2; exit }')"
+    if [[ -z "$vpl_version" || "$vpl_version" == '(none)' ]] ||
+        ! dpkg --compare-versions "$vpl_version" ge 2.6; then
+        printf '警告: Intel QSVにはlibvpl-dev >= 2.6が必要ですが、APT候補は %s です。\n' "${vpl_version:-取得不可}" >&2
+        printf 'QSVビルドは続行できません。使用ディストリビューションの対応パッケージを確認するか、VAAPI/CPUを選択してください。\n' >&2
+        exit 2
+    fi
+fi
 install_packages "${packages[@]}"
 
 if [[ "$with_wine" == yes ]]; then
@@ -166,11 +187,49 @@ printf '\nソースビルドを開始します (一時作業場所: %s)\n' "$BUI
 
 # AviSynth+ はCM解析ツールとFFmpegの入力に必要。
 avisynth="$BUILD_DIR/AviSynthPlus"
-clone_source "$avisynth" --depth 1 https://github.com/AviSynth/AviSynthPlus.git
+clone_source "$avisynth" https://github.com/AviSynth/AviSynthPlus.git
+if [[ "$(git -C "$avisynth" rev-parse --is-shallow-repository)" == true ]]; then
+    if ! git -C "$avisynth" fetch --unshallow --tags origin; then
+        printf '\n警告: AviSynth+のタグ・履歴を取得できませんでした。%s\n' "$SOURCE_NOTICE" >&2
+        exit 1
+    fi
+elif ! git -C "$avisynth" fetch --tags origin; then
+    printf '\n警告: AviSynth+のタグを取得できませんでした。%s\n' "$SOURCE_NOTICE" >&2
+    exit 1
+fi
+if ! git -C "$avisynth" describe --tags --abbrev=0 >/dev/null 2>&1; then
+    printf 'AviSynth+のHEADから到達できるGitタグがありません。タグ付きリリースを取得できるか確認してください。\n' >&2
+    exit 1
+fi
 cmake -S "$avisynth" -B "$BUILD_DIR/avisynth-build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
-ninja -C "$BUILD_DIR/avisynth-build"
-"${SUDO[@]}" ninja -C "$BUILD_DIR/avisynth-build" install
+avisynth_pc="$BUILD_DIR/avisynth-build/avs_core/avisynth.pc"
+if [[ ! -f "$avisynth_pc" ]]; then
+    printf 'AviSynth+のバージョン情報ファイルが見つかりません: %s\n' "$avisynth_pc" >&2
+    exit 1
+fi
+avisynth_version="$(awk '$1 == "Version:" { print $2; exit }' "$avisynth_pc")"
+if [[ -z "$avisynth_version" ]]; then
+    printf 'AviSynth+のバージョンを %s から読み取れません。\n' "$avisynth_pc" >&2
+    exit 1
+fi
+avisynth_pkgversion="${avisynth_version}-$(date --rfc-3339=date | tr -d '-')-git"
+(
+    cd "$BUILD_DIR/avisynth-build"
+    "${SUDO[@]}" checkinstall \
+        --pkgname=avisynth \
+        --pkgversion="$avisynth_pkgversion" \
+        --backup=no \
+        --deldoc=yes \
+        --delspec=yes \
+        --deldesc=yes \
+        --strip=yes \
+        --stripso=yes \
+        --addso=yes \
+        --fstrans=no \
+        --default \
+        ninja install
+)
 "${SUDO[@]}" ldconfig
 
 # FFmpegはenc.jsの音声・字幕・ソフトウェア/VAAPI/QSVオプションに合わせて構成。
@@ -187,14 +246,19 @@ ffmpeg_options=(
     --prefix=/usr/local --bindir=/usr/local/bin
     --enable-gpl --enable-version3 --enable-gnutls
     --enable-libaom --enable-libass --enable-libfreetype --enable-libmp3lame
-    --enable-libopus --enable-libdav1d --enable-libvorbis --enable-libx264
+    --enable-libopus --enable-libdav1d --enable-libvorbis --enable-libfdk-aac --enable-libx264
     --enable-libx265 --enable-libvpx --enable-libaribb24 --enable-avisynth
-    --enable-shared --disable-static --disable-doc --disable-debug
+    --enable-shared --enable-nonfree --disable-static --disable-doc --disable-debug
 )
 if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
     ffmpeg_options+=(--enable-vaapi)
 fi
 if [[ "$hw_mode" == intel ]]; then
+    vpl_version="$(pkg-config --modversion libvpl)"
+    if ! dpkg --compare-versions "$vpl_version" ge 2.6; then
+        printf 'Intel QSV用libvplのバージョンが古すぎます: %s (必要: >= 2.6)\n' "$vpl_version" >&2
+        exit 1
+    fi
     ffmpeg_options+=(--enable-libvpl)
 fi
 # Debian/Ubuntuではpkg-configファイル名がlibaribb24.pcと異なる場合がある。
@@ -213,6 +277,17 @@ fi
     "${SUDO[@]}" make install
 )
 "${SUDO[@]}" ldconfig
+
+# L-SMASHのAV1 parserが必要とするobuparseを先にインストール。
+obuparse="$BUILD_DIR/obuparse"
+clone_source "$obuparse" --depth 1 https://github.com/dwbuiten/obuparse.git
+make -C "$obuparse" -j"$(nproc)"
+"${SUDO[@]}" make -C "$obuparse" install
+"${SUDO[@]}" ldconfig
+if [[ ! -f /usr/local/include/obuparse.h || ! -f /usr/local/lib/libobuparse.so.2 ]]; then
+    printf 'obuparseのインストールを確認できません (/usr/local/include/obuparse.h, /usr/local/lib/libobuparse.so.2)。\n' >&2
+    exit 1
+fi
 
 # L-SMASH本体はL-SMASH-Worksプラグインのビルド依存。
 l_smash="$BUILD_DIR/l-smash"
@@ -262,12 +337,16 @@ for expected_patch in '_mm_load_si128' '(__m128i*)p1 +  0' '(__m128i*)p2 +  0'; 
         exit 1
     fi
 done
-for expected_make_setting in 'CC = gcc' '-std=gnu99' 'CFLAGS = -O3'; do
+for expected_make_setting in 'CC = gcc' '-std=gnu99'; do
     if ! grep -qF -- "$expected_make_setting" "$chapter_src/Makefile"; then
         printf '警告: chapter_exeのMakefile設定 "%s" が見つかりません。パッチ内容を確認してください。\n' "$expected_make_setting" >&2
         exit 1
     fi
 done
+if ! grep -qE '^CFLAGS[[:space:]]*=' "$chapter_src/Makefile"; then
+    printf '警告: chapter_exeのMakefileにCFLAGS定義がありません。パッチ内容を確認してください。\n' >&2
+    exit 1
+fi
 sed -i \
     -e 's/_mm_load_si128/_mm_loadu_si128/g' \
     -e 's/(__m128i\*)p1 +  0/(__m128i*)(p1 + 0)/g' \
@@ -277,13 +356,15 @@ sed -i \
     -e 's/^CC = gcc/CC = g++/' \
     -e 's/-std=gnu99/-std=gnu++11/' \
     -e 's/-fno-tree-vectorize//g' \
-    -e 's/CFLAGS = -O3/CFLAGS = -O3 -msse2/' \
+    -e '/^CFLAGS[[:space:]]*=/ { /-msse2/! s/$/ -msse2/; }' \
     "$chapter_src/Makefile"
 if grep -qF '_mm_load_si128' "$chapter_src/mvec.cpp" ||
     ! grep -qF '(__m128i*)(p1 + 0)' "$chapter_src/mvec.cpp" ||
     ! grep -qF '(__m128i*)(p2 + 0)' "$chapter_src/mvec.cpp" ||
     ! grep -qF 'CC = g++' "$chapter_src/Makefile" ||
-    ! grep -qF 'CFLAGS = -O3 -msse2' "$chapter_src/Makefile"; then
+    ! grep -qF -- '-std=gnu++11' "$chapter_src/Makefile" ||
+    grep -qF -- '-fno-tree-vectorize' "$chapter_src/Makefile" ||
+    ! grep -qE '^CFLAGS[[:space:]]*=.*[[:space:]]-msse2([[:space:]]|$)' "$chapter_src/Makefile"; then
     printf '警告: chapter_exeへの互換性パッチが正しく適用されませんでした。\n' >&2
     exit 1
 fi
@@ -297,11 +378,6 @@ make -C "$join_logo_src" -j"$(nproc)"
 "${SUDO[@]}" install -m 0755 "$join_logo_src/join_logo_scp" /usr/local/bin/join_logo_scp
 
 # TS解析補助
-obuparse="$BUILD_DIR/obuparse"
-clone_source "$obuparse" --depth 1 https://github.com/dwbuiten/obuparse.git
-make -C "$obuparse" -j"$(nproc)"
-"${SUDO[@]}" make -C "$obuparse" install
-
 tsreadex="$BUILD_DIR/tsreadex"
 clone_source "$tsreadex" --depth 1 https://github.com/xtne6f/tsreadex.git
 make -C "$tsreadex" -j"$(nproc)"
@@ -329,10 +405,6 @@ for command_name in ffmpeg ffprobe tsreadex epgdump chapter_exe logoframe join_l
         exit 1
     fi
 done
-if [[ ! -f /usr/local/lib/libobuparse.so.2 || ! -f /usr/local/include/obuparse.h ]]; then
-    printf 'obuparseの共有ライブラリまたはヘッダーが見つかりません。\n' >&2
-    exit 1
-fi
 
 ffmpeg_buildconf="$(/usr/local/bin/ffmpeg -hide_banner -buildconf)"
 ffmpeg_encoders="$(/usr/local/bin/ffmpeg -hide_banner -encoders)"
@@ -342,7 +414,7 @@ for required_option in --enable-avisynth --enable-libaribb24; do
         exit 1
     fi
 done
-for required_encoder in libx264; do
+for required_encoder in libx264 libfdk_aac; do
     if ! grep -qw "$required_encoder" <<<"$ffmpeg_encoders"; then
         printf 'FFmpegに期待するエンコーダー %s がありません。\n' "$required_encoder" >&2
         exit 1

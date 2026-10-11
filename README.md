@@ -22,16 +22,15 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 　　標準的なパッケージに加え、`enc.js` が利用するAvisynth+対応FFmpeg、CM解析ツール、TS/字幕ツールを自家ビルドするセットアップスクリプトを用意しています。Debian/Ubuntu系で、次のコマンドを対話端末から実行してください。
 
 ```bash
-./install-dependencies.sh
+wget https://raw.githubusercontent.com/takyaO/epg2jelly/main/install-dependencies.sh
+bash install-dependencies.sh
 ```
 
-　　ハードウェアエンコード（CPU / VAAPI / Intel QSV）、Intel non-freeドライバー、Wineおよびフォントの導入は選択式です。ライセンス条件を確認する項目はプロンプトで同意を求めます。WineはAPTの導入計画を事前検査し、既存パッケージの削除が必要な場合は導入を中止します。Wineのためだけにi386アーキテクチャを追加する場合があります。
-
-　　FFmpeg 6.1.1ではAvisynth/libx264（GPL）とlibfdk_aac（non-free）を同時に有効化できないため、このセットアップではAvisynth対応を優先し、libfdk_aacは導入しません。`enc.js` はlibfdk_aacがない場合、FFmpeg標準のAACエンコーダーを自動選択します。
+　　ハードウェアエンコード（CPU / VAAPI / Intel QSV）、Intel non-freeドライバー、Wineおよびフォントの導入は選択式です。Intel/AMDはVAAPIを自動推奨します。Intel VAAPIではGPU世代に応じてiHD（Broadwell以降）またはi965（Ivy Bridge/Haswellなど旧世代）を選択してください。AMD VAAPIではMesaドライバーを導入します。その他のGPUでVAAPIを選ぶ場合はベンダーのVAAPIエンコード対応ドライバーを別途用意してください。Intel QSVを選べるのはIntel GPU搭載環境で、libvpl-dev/libvpl2 2.6以上が必要です。AMDではIntel用libvpl/QSVを有効にしません。NVIDIAのNVENCは現在のenc.jsに未対応のため、VAAPI環境がない場合はCPUエンコードを選んでください。ライセンス条件を確認する項目はプロンプトで同意を求めます。WineはAPTの導入計画を事前検査し、既存パッケージの削除が必要な場合は導入を中止します。Wineのためだけにi386アーキテクチャを追加する場合があります。
 
 　　インストーラーは既存の `ffmpeg_611` 設定およびL-SMASH-Worksとの互換性を優先し、FFmpeg 6.1.1を既定で使用します。別バージョンを指定する場合は `FFMPEG_VERSION` を設定してください。ソース取得先の変更・停止などで取得に失敗した場合は、警告を表示して処理を停止します。取得先を確認・更新してから再実行してください。
 
-　　手動で実行時の基本パッケージを入れる場合は `sudo apt install ffmpeg curl jq bc python3` です。ただしAPT版FFmpegにはこのプロジェクトで必要なAvisynth+対応や選択したハードウェアエンコード機能がない場合があるため、上記インストーラーの利用を推奨します。`python3-pip` はこのリポジトリのPythonスクリプトでは使用していません。
+　　手動で実行時の基本パッケージを入れる場合は `sudo apt install ffmpeg curl jq bc python3` です。ただしAPT版FFmpegにはこのプロジェクトで必要なAvisynth+対応や選択したハードウェアエンコード機能がない場合があるため、上記インストーラーの利用を推奨します。
 
 ### オプション：DRCS字幕のUnicode変換
 
