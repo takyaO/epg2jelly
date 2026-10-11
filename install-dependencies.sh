@@ -99,7 +99,7 @@ case "$gpu" in
     amd) default_hw=vaapi ;;
 esac
 printf '検出GPU: %s\n' "$gpu"
-printf 'ハードウェアエンコードの選択:\n  1) 自動推奨 (%s)\n  2) CPUのみ (libx264)\n  3) VAAPI (Intel/AMDなど、対応ドライバーが必要)\n  4) Intel QSV + VAAPI (Intel GPUとlibvpl >= 2.6が必要)\n' "$default_hw"
+printf 'ハードウェアエンコードの選択:\n  1) 自動推奨 (%s)\n  2) CPUのみ (libx264)\n  3) VAAPI (Intel/AMDなど、対応ドライバーが必要)\n  4) Intel QSV + VAAPI (Intel GPUとoneVPL API 2.6以上が必要)\n' "$default_hw"
 read -r -p '選択 [1-4, default 1]: ' hw_choice
 case "${hw_choice:-1}" in
     1) hw_mode="$default_hw" ;;
@@ -495,4 +495,4 @@ fi
 if [[ "$hw_mode" == intel ]]; then
     printf 'libmfx-gen1.2 はIntel Gen12 (Tiger Lake) 以降向けのGPUランタイムです。それより古いIntel GPUでQSVを使う場合はIntel Media SDK系ランタイムが別途必要で、このスクリプトでは導入しません。\n'
 fi
-printf '\nFFmpegのビルド機能を確認しました。実機でエンコードテストしてください。\n'
+printf '\nFFmpegのビルド機能を確認しました。エンコードテストしてください。\n'
