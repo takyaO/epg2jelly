@@ -53,6 +53,20 @@ apt_has_candidate() {
     [[ -n "$candidate" && "$candidate" != '(none)' ]]
 }
 
+# QSVで実際にエンコードできるか短い合成映像で確認する(GPU世代・ドライバー構成による差を検出するため)。
+qsv_smoke_test() {
+    local encoder
+    for encoder in h264_qsv hevc_qsv; do
+        if ! timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
+            -f lavfi -i testsrc2=size=1280x720:rate=30:duration=1 \
+            -pix_fmt nv12 -c:v "$encoder" -f null - >/dev/null 2>&1; then
+            printf '  %s: 失敗\n' "$encoder" >&2
+            return 1
+        fi
+        printf '  %s: OK\n' "$encoder"
+    done
+}
+
 detect_gpu() {
     # 複数GPU環境(iGPU+dGPUなど)でも探索順に依存しないよう、全カードを確認して
     # Intel > AMD > NVIDIA の優先順位で1つ選ぶ。
@@ -128,7 +142,7 @@ if [[ "$gpu" == intel && "$hw_mode" == vaapi ]]; then
 fi
 if [[ "$gpu" == intel && ( "$hw_mode" == vaapi || "$hw_mode" == intel ) &&
     "$intel_driver_package" == intel-media-va-driver ]]; then
-    if ask_yes_no 'Intel non-free iHD media driverを使いますか? (ライセンス条件を確認してください)' no; then
+    if ask_yes_no 'Intel non-free iHD media driverを使いますか? (free版ではGPUによってHEVCなど一部のエンコードが使えません。ライセンス条件を確認してください)' yes; then
         intel_driver_package=intel-media-va-driver-non-free
     fi
 fi
@@ -137,7 +151,7 @@ if ask_yes_no 'Wine 32-bit と winetricks も導入しますか? (APT削除検�
     with_wine=yes
 fi
 with_fonts=no
-if [[ "$with_wine" == yes ]] && ask_yes_no 'Wine向け allfonts を導入しますか? (各フォントのライセンス条件を確認してください)' no; then
+if [[ "$with_wine" == yes ]] && ask_yes_no 'Wine向け allfonts を導入しますか? (各フォントのライセンス条件を確認してください)' yes; then
     with_fonts=yes
 fi
 
@@ -229,6 +243,21 @@ if [[ "$with_wine" == yes ]]; then
         elif ! "${SUDO[@]}" apt-get -y --no-remove install wine32:i386 winetricks; then
             printf '警告: Wineを --no-remove で導入できませんでした。APTによるパッケージ削除は許可していません。\n' >&2
         elif [[ "$with_fonts" == yes ]]; then
+            # winetricksのVLGothic取得元(OSDN)は終了しており、Wayback Machineへのフォールバックでは
+            # HTMLが保存されsha256不一致になる。有効なアーカイブを先にキャッシュへ配置する。
+            vlgothic_url="${VLGOTHIC_URL:-https://mirrors.edge.kernel.org/yocto-sources/VLGothic-20141206.tar.xz}"
+            vlgothic_dir="${W_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/winetricks}/vlgothic"
+            vlgothic_file="$vlgothic_dir/VLGothic-20141206.tar.xz"
+            if ! tar -tJf "$vlgothic_file" >/dev/null 2>&1; then
+                vlgothic_tmp="$BUILD_DIR/VLGothic-20141206.tar.xz"
+                if curl --fail --location --retry 3 --output "$vlgothic_tmp" "$vlgothic_url" &&
+                    tar -tJf "$vlgothic_tmp" >/dev/null 2>&1; then
+                    mkdir -p "$vlgothic_dir"
+                    install -m 0644 "$vlgothic_tmp" "$vlgothic_file"
+                else
+                    printf '警告: VLGothicを %s から取得できませんでした。winetricks標準の取得元で続行します(失敗する場合があります)。\n' "$vlgothic_url" >&2
+                fi
+            fi
             printf 'winetricks allfonts を実行します。追加表示される個別ライセンス確認にも従ってください。\n'
             winetricks allfonts
         fi
@@ -487,6 +516,26 @@ if [[ "$hw_mode" == intel ]]; then
             exit 1
         fi
     done
+fi
+if [[ "$hw_mode" == intel ]]; then
+    printf '\nQSVの動作テストを実行します。\n'
+    if ! qsv_smoke_test; then
+        printf '警告: QSVの動作テストに失敗しました。インストール自体は完了しています。\n' >&2
+        if [[ "$intel_driver_package" == intel-media-va-driver ]]; then
+            printf 'free版のiHDでは、GPUによってHEVCなど一部のエンコードが使えない場合があります。\n' >&2
+            if apt_has_candidate intel-media-va-driver-non-free &&
+                ask_yes_no 'non-free版 intel-media-va-driver-non-free に入れ替えて再テストしますか? (ライセンス条件を確認してください)' no; then
+                install_packages intel-media-va-driver-non-free
+                intel_driver_package=intel-media-va-driver-non-free
+                printf '\nQSVの動作テストを再実行します。\n'
+                if ! qsv_smoke_test; then
+                    printf '警告: non-free版でもQSVの動作テストに失敗しました。vainfo の出力とGPU世代を確認してください。\n' >&2
+                fi
+            fi
+        else
+            printf 'vainfo の出力、GPU世代、/dev/dri/renderD* の権限を確認してください。\n' >&2
+        fi
+    fi
 fi
 if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
     printf '\nVAAPI/QSVの利用には /dev/dri/renderD* へのアクセス権が必要です。必要に応じて render (または video) グループへユーザーを追加してください。\n'
