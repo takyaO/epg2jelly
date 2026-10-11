@@ -100,7 +100,6 @@ function executeTsreadex(inputPath, programId, outputPath) {
 // コマンドライン引数の解析
 const args = process.argv.slice(2);
 let ignoreTags = false;
-let safeMode = false;  // --safe-mode: FORCE_CODEC に関わらず libx264 を強制（debug/fallback用）
 let inputFile = null;
 let jsonFilePath = null;
 let audioComponentType = '0';
@@ -112,8 +111,6 @@ const nonOptionArgs = [];
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--ignore-tags') {
         ignoreTags = true;
-    } else if (args[i] === '--safe-mode') {
-        safeMode = true;
     } else {
         nonOptionArgs.push(args[i]);
     }
@@ -266,7 +263,7 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
 }
 
 if (!inputFile) {
-    console.error('Usage: node enc.js [--safe-mode] [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
+    console.error('Usage: node enc.js [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
     console.error('Example: node enc.js /path/to/番組名.m2ts input_file.json');
     console.error('Example with chapters: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt');
     console.error('Example with trim: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt jls_out.txt');
@@ -413,9 +410,6 @@ function detectSubtitleStreamsInFile(filePath) {
                 }
             }
         }
-        if (subtitleStreams.length === 0) {
-            console.warn(`No subtitle stream detected by ffprobe in ${path.basename(filePath)}`);
-        }
         return subtitleStreams;
     } catch (error) {
         console.error(`Error detecting subtitle streams in ${filePath}:`, error.message);
@@ -540,10 +534,6 @@ function isIntelGpuPresent() {
 
 // 利用可能な映像コーデックを決定
 function getVideoCodec() {
-    if (safeMode) {
-        console.log('Safe mode: Forcing libx264 (software encode)');
-        return 'libx264';
-    }
     if (FORCE_CODEC) {
         console.log(`Manual override: Using ${FORCE_CODEC}`);
         return FORCE_CODEC;
@@ -1017,127 +1007,10 @@ function parseTrimFile(filePath) {
     return { segments, fps: FPS };
 }
 
-/**
-* raw ASS（ffmpeg -map 0:N -c:s ass で抽出したもの）の0秒が、映像・音声の時間軸
-* （コンテナstart_time基準）に対して何秒ずれているかを返す。全Dialogueに加算して使う。
-*
-* ffmpegが字幕単独抽出で使う0秒の基準は録画ごとに異なる
-*   ・字幕ストリームの最初のパケットのPTS（例: ピンネタ）
-*   ・コンテナstart_time（例: ダイヤのA）
-* ため、固定の式では合わない。そこで実測する:
-*   shift = (最初にデコードされた字幕のPTS - コンテナstart_time) - (raw ASSの最初のDialogue開始時刻)
-* 実測できない場合のみ、従来式 shift = 最初の字幕パケットPTS - コンテナstart_time にフォールバックする。
-*/
-function getFirstDialogueStart(assPath) {
-    try {
-        const line = fs.readFileSync(assPath, 'utf8').split('\n').find(l => l.startsWith('Dialogue:'));
-        if (!line) return null;
-        const parts = line.split(',');
-        return parts.length >= 10 ? parseAssTime(parts[1]) : null;
-    } catch (e) {
-        return null;
-    }
-}
-
-/**
-* 字幕ストリームのデコード済みフレームのPTSを、コンテナstart_time基準の秒で返す（raw ASSのDialogueと同じ順・同数）。
-* ffmpegがASSの0秒に何を使ったかに依存しないため、これをDialogueの開始時刻として直接使える。
-* 取得できない場合は null。
-*/
-function getSubtitleFrameTimes(filePath, streamIndex) {
-    try {
-        const run = (extra) => execFileSync(getEnv('FFPROBE'), [
-            '-v', 'error', ...getAnalyze(), ...extra, filePath
-        ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 200, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-
-        const containerStart = parseFloat(run(['-show_entries', 'format=start_time', '-of', 'default=nw=1:nk=1']));
-        if (!Number.isFinite(containerStart)) return null;
-
-        const out = run([
-            '-select_streams', String(streamIndex),
-            '-show_frames', '-show_entries', 'frame=pts_time',
-            '-of', 'compact'
-        ]);
-        const times = [];
-        for (const line of out.split('\n')) {
-            const m = line.match(/pts_time=(-?\d+(?:\.\d+)?)/);
-            if (!m) return null;  // N/A などが混じる場合は信頼しない
-            times.push(parseFloat(m[1]) - containerStart);
-        }
-        return times.length > 0 ? times : null;
-    } catch (e) {
-        console.warn(`Subtitle frame times unavailable for stream ${streamIndex}: ${e.message}`);
-        return null;
-    }
-}
-
-function getSubtitleTimeShift(filePath, streamIndex, rawAssPath) {
-    const run = (extra) => execFileSync(getEnv('FFPROBE'), [
-        '-v', 'error', ...getAnalyze(), ...extra, filePath
-    ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-
-    try {
-        const containerStart = parseFloat(run(['-show_entries', 'format=start_time', '-of', 'default=nw=1:nk=1']));
-        if (!Number.isFinite(containerStart)) {
-            console.warn('Subtitle shift: container start_time unavailable; using 0');
-            return 0;
-        }
-
-        // 実測: 最初にデコードされた字幕フレームのPTSと、raw ASSの最初のDialogueを突き合わせる
-        let measured = null;
-        try {
-            const firstAssStart = rawAssPath ? getFirstDialogueStart(rawAssPath) : null;
-            const frameOut = run([
-                '-select_streams', String(streamIndex),
-                '-show_frames', '-show_entries', 'frame=pts_time',
-                '-read_intervals', '%+120',
-                '-of', 'compact'
-            ]);
-            const m = frameOut.match(/pts_time=(-?\d+(?:\.\d+)?)/);  // PTSラップ付近の録画は負の値になる
-            if (m && firstAssStart !== null) {
-                const v = (parseFloat(m[1]) - containerStart) - firstAssStart;
-                if (Number.isFinite(v) && Math.abs(v) < 3600) measured = v;
-            }
-        } catch (e) {
-            console.warn(`Subtitle shift: measurement failed (${e.message})`);
-        }
-
-        // 従来式
-        let formula = null;
-        try {
-            const firstSubPts = parseFloat(run([
-                '-select_streams', String(streamIndex),
-                '-show_entries', 'packet=pts_time',
-                '-read_intervals', '%+#1',
-                '-of', 'csv=p=0'
-            ]).split('\n')[0]);
-            if (Number.isFinite(firstSubPts)) formula = firstSubPts - containerStart;
-        } catch (e) { /* ignore */ }
-
-        const shift = measured !== null ? measured : (formula !== null ? formula : 0);
-        console.log(`Subtitle time shift for stream ${streamIndex}: ${shift.toFixed(3)}s ` +
-            `(${measured !== null ? 'measured' : 'fallback'}; measured=${measured === null ? 'n/a' : measured.toFixed(3)}, ` +
-            `firstPacketFormula=${formula === null ? 'n/a' : formula.toFixed(3)}, containerStart=${containerStart})`);
-        return shift;
-    } catch (e) {
-        console.warn(`Subtitle shift detection failed for stream ${streamIndex}: ${e.message}; using 0`);
-        return 0;
-    }
-}
-
-function processSubtitleFile(inputSubPath, outputPath, trimSegments, shiftSec = 0, absStarts = null) {
+function processSubtitleFile(inputSubPath, outputPath, trimSegments) {
     const content = fs.readFileSync(inputSubPath, 'utf8');
     const lines = content.split('\n');
     const outputLines = [];
-
-    // Dialogue数とデコード済み字幕フレーム数が一致すれば、1件ごとにフレームPTSを開始時刻に使う
-    const dialogueCount = lines.filter(l => l.startsWith('Dialogue:')).length;
-    const perLine = Array.isArray(absStarts) && absStarts.length === dialogueCount;
-    console.log(perLine
-        ? `Subtitle timing: per-line from decoded frame PTS (${dialogueCount} lines)`
-        : `Subtitle timing: constant shift ${shiftSec.toFixed(3)}s` +
-          (Array.isArray(absStarts) ? ` (frame count ${absStarts.length} != dialogue count ${dialogueCount})` : ''));
-    let dialogueIndex = 0;
 
     let accumulatedOffset = 0;
     const segmentOffsets = [];
@@ -1160,11 +1033,8 @@ function processSubtitleFile(inputSubPath, outputPath, trimSegments, shiftSec = 
             // Dialogue行のトリム処理
             const parts = line.split(',');
             if (parts.length >= 10) {
-                const rawStart = parseAssTime(parts[1]);
-                const rawEnd = parseAssTime(parts[2]);
-                const start = perLine ? absStarts[dialogueIndex] : rawStart + shiftSec;
-                const end = perLine ? start + Math.max(0, rawEnd - rawStart) : rawEnd + shiftSec;
-                dialogueIndex++;
+                const start = parseAssTime(parts[1]);
+                const end = parseAssTime(parts[2]);
 
                 let mappedStart = null;
                 let mappedEnd = null;
@@ -1468,12 +1338,7 @@ function getCodecSpecificArgs(useCodec) {
 
                 // 字幕抽出
                 const rawAssFiles = [];
-                const rawAssShifts = [];
-                const rawAssAbs = [];
                 const hasSubtitles = hasLibaribb24 && /\[字\]/.test(inputFileName) && !ignoreTags;
-                if (!hasSubtitles) {
-                    console.log(`Subtitle extraction skipped (libaribb24=${hasLibaribb24}, [字] in name=${/\[字\]/.test(inputFileName)}, ignoreTags=${ignoreTags})`);
-                }
                 if (hasSubtitles) {
                     const subtitleStreams = detectSubtitleStreamsInFile(inputFile);
                     for (let i = 0; i < subtitleStreams.length; i++) {
@@ -1486,15 +1351,11 @@ function getCodecSpecificArgs(useCodec) {
                                 '-map', `0:${subtitleStreams[i]}`,
                                 '-c:s', 'ass',
                                 rawAssFile
-                            ], { timeout: 600000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+                            ], { timeout: 120000 });
                             rawAssFiles.push(rawAssFile);
-                            rawAssShifts.push(getSubtitleTimeShift(inputFile, subtitleStreams[i], rawAssFile));
-                            rawAssAbs.push(getSubtitleFrameTimes(inputFile, subtitleStreams[i]));
                             console.log(`Extracted raw ASS stream ${i + 1}:`, rawAssFile);
                         } catch (e) {
                             console.error(`ASS extraction failed for stream ${subtitleStreams[i]}:`, e.message);
-                            if (e.code) console.error(`  code=${e.code} signal=${e.signal || ''}`);
-                            if (e.stderr) console.error(`  ffmpeg stderr: ${String(e.stderr).slice(-2000)}`);
                         }
                     }
                 }
@@ -1548,7 +1409,7 @@ function getCodecSpecificArgs(useCodec) {
                     if (fs.existsSync(rawAssFiles[i])) {
                         const suffix = i === 0 ? '' : `.${i + 1}`;
                         const finalAss = `./${inputFileName}.ja${suffix}.ass`;
-                        processSubtitleFile(rawAssFiles[i], finalAss, segments, rawAssShifts[i], rawAssAbs[i]);
+                        processSubtitleFile(rawAssFiles[i], finalAss, segments);
                     }
                 }
 
@@ -1730,4 +1591,4 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/10/09
+// Time stamp: 2026/09/12

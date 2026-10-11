@@ -18,8 +18,24 @@ Helps integrate the TV recording management server, EPGStation, with media serve
 　　https://github.com/l3tnun/docker-mirakurun-epgstation
   
 2. **ffmpeg**など、標準的なパッケージ
-   
-　　sudo apt install ffmpeg curl jq bc python3-pip
+
+　　標準的なパッケージに加え、`enc.js` が利用するAvisynth+対応FFmpeg、CM解析ツール、TS/字幕ツールを自家ビルドするセットアップスクリプトを用意しています。Debian/Ubuntu系で、次のコマンドを対話端末から実行してください。
+
+```bash
+./install-dependencies.sh
+```
+
+　　ハードウェアエンコード（CPU / VAAPI / Intel QSV）、Intel non-freeドライバー、Wineおよびフォントの導入は選択式です。ライセンス条件を確認する項目はプロンプトで同意を求めます。WineはAPTの導入計画を事前検査し、既存パッケージの削除が必要な場合は導入を中止します。Wineのためだけにi386アーキテクチャを追加する場合があります。
+
+　　FFmpeg 6.1.1ではAvisynth/libx264（GPL）とlibfdk_aac（non-free）を同時に有効化できないため、このセットアップではAvisynth対応を優先し、libfdk_aacは導入しません。`enc.js` はlibfdk_aacがない場合、FFmpeg標準のAACエンコーダーを自動選択します。
+
+　　インストーラーは既存の `ffmpeg_611` 設定およびL-SMASH-Worksとの互換性を優先し、FFmpeg 6.1.1を既定で使用します。別バージョンを指定する場合は `FFMPEG_VERSION` を設定してください。ソース取得先の変更・停止などで取得に失敗した場合は、警告を表示して処理を停止します。取得先を確認・更新してから再実行してください。
+
+　　手動で実行時の基本パッケージを入れる場合は `sudo apt install ffmpeg curl jq bc python3` です。ただしAPT版FFmpegにはこのプロジェクトで必要なAvisynth+対応や選択したハードウェアエンコード機能がない場合があるため、上記インストーラーの利用を推奨します。`python3-pip` はこのリポジトリのPythonスクリプトでは使用していません。
+
+### オプション：DRCS字幕のUnicode変換
+
+録画名に `[字]` が含まれる場合、作業ディレクトリに `drcs-conv.toml` があり、`a2ac` と `fc-match` が利用できれば、DRCSをUnicodeに変換した外部字幕（`.ja.ass`）も出力します。通常モードではエンコード成功後に生成し、トリムモードでは最初の字幕ストリームを一時ASSに抽出する段階でa2acを使い、その一時ASSに既存の時刻補正・トリム処理を適用します。条件を満たさない場合やa2acでの抽出に失敗した場合は、従来どおりffmpegで抽出します。`enc01.sh` 経由で実行すると、既存の処理で `.ja.vtt` に変換されます。いずれの場合も動画エンコードには影響しません。
 
 ## インストール手順
 
