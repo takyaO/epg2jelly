@@ -49,7 +49,7 @@ install_packages() {
 # APTに導入可能な候補バージョンがあるか確認する。
 apt_has_candidate() {
     local candidate
-    candidate="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
+    candidate="$(LC_ALL=C apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
     [[ -n "$candidate" && "$candidate" != '(none)' ]]
 }
 
@@ -495,4 +495,4 @@ fi
 if [[ "$hw_mode" == intel ]]; then
     printf 'libmfx-gen1.2 はIntel Gen12 (Tiger Lake) 以降向けのGPUランタイムです。それより古いIntel GPUでQSVを使う場合はIntel Media SDK系ランタイムが別途必要で、このスクリプトでは導入しません。\n'
 fi
-printf '\nFFmpegのビルド機能を確認しました。エンコードテストしてください。\n'
+printf '\nFFmpegのビルド機能を確認しました。実機でエンコードテストしてください。\n'
