@@ -54,10 +54,13 @@ apt_has_candidate() {
 }
 
 # QSVで実際にエンコードできるか短い合成映像で確認する(GPU世代・ドライバー構成による差を検出するため)。
+# 実運用(enc.js)と同じく -init_hw_device で明示的にQSVデバイスを作成する。
+# (暗黙のセッション作成だけでは、libvaが古い環境の失敗を検出できない)
 qsv_smoke_test() {
     local encoder
     for encoder in h264_qsv hevc_qsv; do
         if ! timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
+            -init_hw_device qsv=qsv:hw \
             -f lavfi -i testsrc2=size=1280x720:rate=30:duration=1 \
             -pix_fmt nv12 -c:v "$encoder" -f null - >/dev/null 2>&1; then
             printf '  %s: 失敗\n' "$encoder" >&2
@@ -65,6 +68,47 @@ qsv_smoke_test() {
         fi
         printf '  %s: OK\n' "$encoder"
     done
+}
+
+# VAAPIで実際にエンコードできるか、アクセス可能な全レンダーノードで短い合成映像を試す。
+# 1つ以上のノードで全エンコーダーが成功すれば成功(複数GPU環境では使えるノードも表示する)。
+vaapi_smoke_test() {
+    local node encoder failed ok_nodes=()
+    for node in /dev/dri/renderD*; do
+        [[ -e "$node" && -r "$node" && -w "$node" ]] || continue
+        failed=no
+        printf '  %s\n' "$node"
+        for encoder in "$@"; do
+            if timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
+                -vaapi_device "$node" \
+                -f lavfi -i testsrc2=size=1280x720:rate=30:duration=1 \
+                -vf 'format=nv12,hwupload' -c:v "$encoder" -f null - >/dev/null 2>&1; then
+                printf '    %s: OK\n' "$encoder"
+            else
+                printf '    %s: 失敗\n' "$encoder"
+                failed=yes
+            fi
+        done
+        if [[ "$failed" == no ]]; then
+            ok_nodes+=("$node")
+        fi
+    done
+    if (( ${#ok_nodes[@]} > 0 )); then
+        printf '  動作確認できたデバイス: %s\n' "${ok_nodes[*]}"
+        return 0
+    fi
+    return 1
+}
+
+# VAAPI/QSVはレンダーノード(/dev/dri/renderD*)を読み書きできる必要がある。
+render_node_accessible() {
+    local node
+    for node in /dev/dri/renderD*; do
+        if [[ -e "$node" && -r "$node" && -w "$node" ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 detect_gpu() {
@@ -107,21 +151,34 @@ else
 fi
 
 gpu="$(detect_gpu)"
-default_hw=cpu
-case "$gpu" in
-    intel) default_hw=vaapi ;;
-    amd) default_hw=vaapi ;;
-esac
+# 検出結果に合わせて有効な選択肢だけを提示し、推奨を1番にする(Enterで推奨を選択)。
 printf '検出GPU: %s\n' "$gpu"
-printf 'ハードウェアエンコードの選択:\n  1) 自動推奨 (%s)\n  2) CPUのみ (libx264)\n  3) VAAPI (Intel/AMDなど、対応ドライバーが必要)\n  4) Intel QSV + VAAPI (Intel GPUとoneVPL API 2.6以上が必要)\n' "$default_hw"
-read -r -p '選択 [1-4, default 1]: ' hw_choice
-case "${hw_choice:-1}" in
-    1) hw_mode="$default_hw" ;;
-    2) hw_mode=cpu ;;
-    3) hw_mode=vaapi ;;
-    4) hw_mode=intel ;;
-    *) printf '不正な選択です。\n' >&2; exit 2 ;;
+case "$gpu" in
+    intel)
+        hw_modes=(vaapi intel cpu)
+        hw_labels=('VAAPI (推奨)' 'Intel QSV + VAAPI (oneVPL API 2.6以上が必要)' 'CPUのみ (libx264)')
+        ;;
+    amd)
+        hw_modes=(vaapi cpu)
+        hw_labels=('VAAPI (推奨。Mesaドライバーを導入)' 'CPUのみ (libx264)')
+        ;;
+    *)
+        hw_modes=(cpu vaapi)
+        hw_labels=('CPUのみ (libx264) (推奨)' 'VAAPI (対応ドライバーを別途用意する必要があります)')
+        printf '注意: %s GPUはVAAPIドライバーを自動導入できないため、CPUエンコードを推奨します。\n' "$gpu"
+        ;;
 esac
+printf 'ハードウェアエンコードの選択:\n'
+for i in "${!hw_modes[@]}"; do
+    printf '  %d) %s\n' "$((i + 1))" "${hw_labels[$i]}"
+done
+read -r -p "選択 [1-${#hw_modes[@]}, default 1]: " hw_choice
+hw_choice="${hw_choice:-1}"
+if [[ ! "$hw_choice" =~ ^[0-9]+$ ]] || (( 10#$hw_choice < 1 || 10#$hw_choice > ${#hw_modes[@]} )); then
+    printf '不正な選択です。\n' >&2
+    exit 2
+fi
+hw_mode="${hw_modes[$((10#$hw_choice - 1))]}"
 if [[ "$hw_mode" == intel && "$gpu" != intel ]]; then
     printf 'Intel QSVにはIntel GPUが必要ですが、検出結果は %s です。CPUまたはVAAPIを選択してください。\n' "$gpu" >&2
     exit 2
@@ -473,7 +530,8 @@ make -C "$epgdump" -j"$(nproc)"
 arib2ass="$BUILD_DIR/arib2ass-cstyle"
 clone_source "$arib2ass" --depth 1 --recurse-submodules \
     https://codeberg.org/moex3/arib2ass-cstyle.git
-make -C "$arib2ass" -j"$(nproc)"
+# a2acのMakefileは並列実行するとlibaribcaption.aの生成が競合する(ranlib時にファイルが無いエラー)ため、直列でビルドする。
+make -C "$arib2ass" -j1
 "${SUDO[@]}" install -m 0755 "$arib2ass/a2ac" /usr/local/bin/a2ac
 "${SUDO[@]}" ldconfig
 
@@ -517,11 +575,54 @@ if [[ "$hw_mode" == intel ]]; then
         fi
     done
 fi
-if [[ "$hw_mode" == intel ]]; then
+# --- レンダーノードへのアクセス権 ---
+# 遠隔接続(SSH等)ではローカルログイン時の自動付与が無く、render等のグループ所属が必要になる。
+render_access=yes
+render_node=''
+if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
+    render_access=no
+    render_node="$(compgen -G '/dev/dri/renderD*' | head -n 1 || true)"
+    if [[ -z "$render_node" ]]; then
+        printf '警告: /dev/dri/renderD* が見つかりません。GPUドライバー/ファームウェア、仮想環境の設定を確認してください。\n' >&2
+    elif render_node_accessible; then
+        render_access=yes
+        if [[ "$(id -u)" == 0 && -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
+            printf '注意: root権限で実行しているため、一般ユーザー(%s)のアクセス権は確認していません。必要なら次を実行してください: usermod -aG %s %s\n' \
+                "$SUDO_USER" "$(stat -c %G "$render_node")" "$SUDO_USER"
+        fi
+    else
+        render_group="$(stat -c %G "$render_node")"
+        current_user="$(id -un)"
+        render_relogin=no
+        printf '\n%s にアクセスできません(グループ: %s)。\n' "$render_node" "$render_group"
+        if id -nG "$current_user" | tr ' ' '\n' | grep -qx "$render_group"; then
+            printf '%s は既に %s グループに登録されていますが、現在のセッションには反映されていません。\n' "$current_user" "$render_group"
+            render_relogin=yes
+        elif ask_yes_no "ユーザー $current_user を $render_group グループに追加しますか?" yes; then
+            if "${SUDO[@]}" usermod -aG "$render_group" "$current_user"; then
+                render_relogin=yes
+            else
+                printf '警告: グループへの追加に失敗しました。手動で実行してください: sudo usermod -aG %s %s\n' "$render_group" "$current_user" >&2
+            fi
+        else
+            printf 'グループへの追加は行いませんでした。必要になったら次を実行してください: sudo usermod -aG %s %s\n' "$render_group" "$current_user"
+        fi
+        if [[ "$render_relogin" == yes ]]; then
+            printf '反映するには、再ログイン(遠隔接続は接続し直し)するか、次のコマンドで新しいシェルを開いてください:\n  newgrp %s\n' "$render_group"
+            printf '反映後、次のコマンドでドライバーの認識を確認できます:\n  vainfo --display drm --device %s\n' "$render_node"
+        fi
+    fi
+fi
+# --- ここまで ---
+if [[ "$hw_mode" == intel && "$render_access" == yes ]]; then
     printf '\nQSVの動作テストを実行します。\n'
     if ! qsv_smoke_test; then
         printf '警告: QSVの動作テストに失敗しました。インストール自体は完了しています。\n' >&2
-        if [[ "$intel_driver_package" == intel-media-va-driver ]]; then
+        libva_version="$(pkg-config --modversion libva 2>/dev/null || true)"
+        if [[ -n "$libva_version" ]] && ! dpkg --compare-versions "$libva_version" ge 2.15; then
+            printf '原因の可能性: libva %s (VA-API 1.14以下)。FFmpegの -init_hw_device qsv には libva 2.15 以上が必要です。\n' "$libva_version" >&2
+            printf 'Ubuntu 22.04のaptのlibvaは2.14のため、新しいlibvaをソースからビルドしてFFmpegに使わせる必要があります。\n' >&2
+        elif [[ "$intel_driver_package" == intel-media-va-driver ]]; then
             printf 'free版のiHDでは、GPUによってHEVCなど一部のエンコードが使えない場合があります。\n' >&2
             if apt_has_candidate intel-media-va-driver-non-free &&
                 ask_yes_no 'non-free版 intel-media-va-driver-non-free に入れ替えて再テストしますか? (ライセンス条件を確認してください)' no; then
@@ -536,10 +637,40 @@ if [[ "$hw_mode" == intel ]]; then
             printf 'vainfo の出力、GPU世代、/dev/dri/renderD* の権限を確認してください。\n' >&2
         fi
     fi
+elif [[ "$hw_mode" == intel ]]; then
+    printf '\nQSVの動作テストは、レンダーノードにアクセスできないためスキップしました。アクセス権の反映後に実機で確認してください。\n'
 fi
+# --- VAAPI動作テスト ---
+if [[ ( "$hw_mode" == vaapi || "$hw_mode" == intel ) && "$render_access" == yes ]]; then
+    vaapi_encoders=(h264_vaapi hevc_vaapi)
+    if [[ "$gpu" == intel && "$intel_driver_package" == i965-va-driver ]]; then
+        # i965世代はHEVCのハードウェアエンコードに対応しない
+        vaapi_encoders=(h264_vaapi)
+    fi
+    printf '\nVAAPIの動作テストを実行します。\n'
+    if ! vaapi_smoke_test "${vaapi_encoders[@]}"; then
+        printf '警告: VAAPIの動作テストに失敗しました。インストール自体は完了しています。\n' >&2
+        if [[ "$gpu" == intel && "$intel_driver_package" == intel-media-va-driver ]]; then
+            printf 'free版のiHDでは、GPUによってHEVCなど一部のエンコードが使えない場合があります。\n' >&2
+            if apt_has_candidate intel-media-va-driver-non-free &&
+                ask_yes_no 'non-free版 intel-media-va-driver-non-free に入れ替えて再テストしますか? (ライセンス条件を確認してください)' no; then
+                install_packages intel-media-va-driver-non-free
+                intel_driver_package=intel-media-va-driver-non-free
+                printf '\nVAAPIの動作テストを再実行します。\n'
+                if ! vaapi_smoke_test "${vaapi_encoders[@]}"; then
+                    printf '警告: non-free版でもVAAPIの動作テストに失敗しました。vainfo の出力とGPU世代を確認してください。\n' >&2
+                fi
+            fi
+        else
+            printf 'vainfo --display drm --device %s の出力を確認してください。AMDではカーネル/Mesa/ファームウェアの世代も影響します (dmesg | grep -i -E "amdgpu|vcn")。\n' "$render_node" >&2
+        fi
+    fi
+elif [[ "$hw_mode" == vaapi ]]; then
+    printf '\nVAAPIの動作テストは、レンダーノードにアクセスできないためスキップしました。アクセス権の反映後に実機で確認してください。\n'
+fi
+# --- ここまで(VAAPI) ---
 if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
-    printf '\nVAAPI/QSVの利用には /dev/dri/renderD* へのアクセス権が必要です。必要に応じて render (または video) グループへユーザーを追加してください。\n'
-    printf 'ドライバーの認識確認には vainfo を使用できます。\n'
+    printf '\nドライバーの認識確認には vainfo を使用できます: vainfo --display drm --device %s\n' "${render_node:-/dev/dri/renderD128}"
 fi
 if [[ "$hw_mode" == intel ]]; then
     printf 'libmfx-gen1.2 はIntel Gen12 (Tiger Lake) 以降向けのGPUランタイムです。それより古いIntel GPUでQSVを使う場合はIntel Media SDK系ランタイムが別途必要で、このスクリプトでは導入しません。\n'
