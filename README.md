@@ -17,7 +17,7 @@ Helps integrate the TV recording management server, EPGStation, with media serve
    
 　　https://github.com/l3tnun/docker-mirakurun-epgstation
   
-2. **ffmpeg**など、標準的なパッケージ
+2. **ffmpeg**など
 
 　　内部的に利用するAvisynth+対応FFmpeg、CM解析ツール、TS/字幕ツールを自家ビルドするセットアップスクリプトを用意しています。Debian/Ubuntu系で、次のコマンドを対話端末から実行してください。
 
@@ -26,11 +26,11 @@ wget https://raw.githubusercontent.com/takyaO/epg2jelly/main/install-dependencie
 bash install-dependencies.sh
 ```
 
-　　ハードウェアエンコード（CPU / VAAPI / Intel QSV）、Intel non-freeドライバー、Wineおよびフォントの導入は選択式です。Wineは使用しませんが、別途ロゴ生成で使用する場合を考えて含めています。Intel/AMDはVAAPIを自動推奨します。Intel VAAPIではGPU世代に応じてiHD（Broadwell以降）またはi965（Ivy Bridge/Haswellなど旧世代）を選択してください。AMD VAAPIではMesaドライバーを導入します。その他のGPUでVAAPIを選ぶ場合はベンダーのVAAPIエンコード対応ドライバーを別途用意してください。Intel QSVを選べるのはIntel GPU搭載環境で、libvpl-dev/libvpl2 2.6以上が必要です。AMDではIntel用libvpl/QSVを有効にしません。NVIDIAのNVENCは現在のenc.jsに未対応のため、VAAPI環境がない場合はCPUエンコードを選んでください。ライセンス条件を確認する項目はプロンプトで同意を求めます。WineはAPTの導入計画を事前検査し、既存パッケージの削除が必要な場合は導入を中止します。
+　　ハードウェアエンコード（CPU / VAAPI / Intel QSV）、Intel non-freeドライバー、Wineおよびフォントの導入は選択式です。Wineは使用しませんが、別途ロゴ生成で使用する場合を考えて含めています。NVIDIAのNVENCは現在のenc.jsに未対応のため、VAAPI環境がない場合はCPUエンコードを選んでください。ライセンス条件を確認する項目はプロンプトで同意を求めます。WineはAPTの導入計画を事前検査し、既存パッケージの削除が必要な場合は導入を中止します。
 
 　　インストーラーは既存の `ffmpeg_611` 設定およびL-SMASH-Worksとの互換性を優先し、FFmpeg 6.1.1を既定で使用します。別バージョンを指定する場合は `FFMPEG_VERSION` を設定してください。ソース取得先の変更・停止などで取得に失敗した場合は、警告を表示して処理を停止します。取得先を確認・更新してから再実行してください。
 
-　　最低限必要となる基本パッケージを手動で入れる場合は `sudo apt install ffmpeg curl jq bc python3` です。ただしAPT版FFmpegにはこのプロジェクトで必要なAvisynth+対応その他機能がないため、上記インストーラーの利用を推奨します。
+　　上記スクリプトを使わずに、最低限必要となる基本パッケージを手動で入れる場合は `sudo apt install ffmpeg curl jq bc python3` です。このAPT版FFmpegにはAvisynth+対応その他このプロジェクトで必要な機能がありません。
 
 ### オプション：DRCS字幕のUnicode変換
 
