@@ -70,6 +70,31 @@ qsv_smoke_test() {
     done
 }
 
+# システムのlibvaバージョンを返す(導入済みならpkg-config、未導入ならAPT候補)。取得できなければ空。
+detect_libva_version() {
+    local version
+    version="$(pkg-config --modversion libva 2>/dev/null || true)"
+    if [[ -z "$version" ]]; then
+        version="$(LC_ALL=C apt-cache policy libva-dev 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
+    fi
+    if [[ "$version" == '(none)' ]]; then
+        version=''
+    fi
+    printf '%s\n' "$version"
+}
+
+# FFmpegのQSVバックエンドを決める。libvpl(oneVPL)版の明示的なQSVデバイス作成(-init_hw_device qsv)は、
+# libva 2.15以上とVA-API 1.15以上対応のドライバーが必要。それ未満(Ubuntu 22.04のapt構成など)ではlibmfx(Media SDK)版を使う。
+choose_qsv_backend() {
+    local libva_ver
+    libva_ver="$(detect_libva_version)"
+    if [[ -n "$libva_ver" ]] && ! dpkg --compare-versions "$libva_ver" ge 2.15; then
+        printf 'libmfx\n'
+    else
+        printf 'libvpl\n'
+    fi
+}
+
 # VAAPIで実際にエンコードできるか、アクセス可能な全レンダーノードで短い合成映像を試す。
 # 1つ以上のノードで全エンコーダーが成功すれば成功(複数GPU環境では使えるノードも表示する)。
 vaapi_smoke_test() {
@@ -155,8 +180,25 @@ gpu="$(detect_gpu)"
 printf '検出GPU: %s\n' "$gpu"
 case "$gpu" in
     intel)
-        hw_modes=(vaapi intel cpu)
-        hw_labels=('VAAPI (推奨)' 'Intel QSV + VAAPI (oneVPL API 2.6以上が必要)' 'CPUのみ (libx264)')
+        # QSVはVAAPIを含む上位の選択肢。QSV用パッケージがAPTで見つかる場合はQSVを推奨する。
+        if [[ "$(choose_qsv_backend)" == libmfx ]]; then
+            qsv_menu_packages=(libmfx-dev libmfx1)
+        else
+            qsv_menu_packages=(libvpl-dev libvpl2)
+        fi
+        qsv_menu_ready=yes
+        for qsv_menu_package in "${qsv_menu_packages[@]}"; do
+            if ! apt_has_candidate "$qsv_menu_package"; then
+                qsv_menu_ready=no
+            fi
+        done
+        if [[ "$qsv_menu_ready" == yes ]]; then
+            hw_modes=(intel vaapi cpu)
+            hw_labels=('Intel QSV + VAAPI (推奨。Broadwell以降のIntel GPU向け)' 'VAAPIのみ (旧世代向けのi965ドライバーも選択可)' 'CPUのみ (libx264)')
+        else
+            hw_modes=(vaapi intel cpu)
+            hw_labels=('VAAPI (推奨)' 'Intel QSV + VAAPI (現在のAPT情報ではQSV用パッケージが見つかりません。導入に失敗する可能性があります)' 'CPUのみ (libx264)')
+        fi
         ;;
     amd)
         hw_modes=(vaapi cpu)
@@ -222,6 +264,7 @@ packages=(
     libaribb24-dev libatomic-ops-dev libdevil-dev libsoundtouch-dev libxml2-dev
     libfontconfig1-dev fontconfig libdrm-dev libfdk-aac-dev
 )
+qsv_backend=none
 case "$hw_mode" in
     vaapi)
         packages+=(libva-dev v4l-utils vainfo)
@@ -235,7 +278,20 @@ case "$hw_mode" in
         fi
         ;;
     intel)
-        packages+=(libva-dev libvpl-dev libvpl2 libmfx-gen1.2 "$intel_driver_package" v4l-utils vainfo)
+        # FFmpegのQSVバックエンドを決める。libvpl(oneVPL)版の明示的なQSVデバイス作成(-init_hw_device qsv)は、
+        # libva 2.15以上とVA-API 1.15以上対応のドライバーが必要。Ubuntu 22.04のapt構成のようにそれ未満の環境では、
+        # Intel Media SDK(libmfx)版を使う。
+        qsv_backend="$(choose_qsv_backend)"
+        if [[ "$qsv_backend" == libmfx ]]; then
+            printf '注意: システムのlibva %s は2.15未満のため、libvpl(oneVPL)版では -init_hw_device qsv が動作しません。\n' "$(detect_libva_version)"
+            printf 'Intel Media SDK (libmfx) 版のQSVを使用します。Media SDKは新しい世代のIntel GPU(Arcなど)に対応しない場合があります。\n'
+            printf 'そのようなGPUでは、libvaとドライバーが新しいディストリビューション(Ubuntu 24.04以降など)を使用してください。\n'
+        fi
+        if [[ "$qsv_backend" == libvpl ]]; then
+            packages+=(libva-dev libvpl-dev libvpl2 libmfx-gen1.2 "$intel_driver_package" v4l-utils vainfo)
+        else
+            packages+=(libva-dev libmfx-dev libmfx1 "$intel_driver_package" v4l-utils vainfo)
+        fi
         ;;
 esac
 printf '\nAPT依存パッケージを更新・導入します。\n'
@@ -251,7 +307,15 @@ if [[ "$intel_driver_package" == intel-media-va-driver-non-free ]] &&
     done
     intel_driver_package=intel-media-va-driver
 fi
-if [[ "$hw_mode" == intel ]]; then
+if [[ "$hw_mode" == intel && "$qsv_backend" == libmfx ]]; then
+    for qsv_package in libmfx-dev libmfx1; do
+        if ! apt_has_candidate "$qsv_package"; then
+            printf '警告: Intel QSVに必要なAPTパッケージ %s が見つかりません。\n' "$qsv_package" >&2
+            printf 'QSVビルドは続行できません。使用ディストリビューションの対応パッケージを確認するか、VAAPI/CPUを選択してください。\n' >&2
+            exit 2
+        fi
+    done
+elif [[ "$hw_mode" == intel ]]; then
     for qsv_package in libvpl-dev libvpl2; do
         if ! apt_has_candidate "$qsv_package"; then
             printf '警告: Intel QSVに必要なAPTパッケージ %s が見つかりません。\n' "$qsv_package" >&2
@@ -272,7 +336,7 @@ if [[ "$hw_mode" == intel ]]; then
     fi
 fi
 install_packages "${packages[@]}"
-if [[ "$hw_mode" == intel ]]; then
+if [[ "$hw_mode" == intel && "$qsv_backend" == libvpl ]]; then
     # libvpl-dev が提供するpkg-config名は vpl (libvpl ではない)。2.6はoneVPLのAPIバージョン。
     vpl_version="$(pkg-config --modversion vpl 2>/dev/null || true)"
     if [[ -z "$vpl_version" ]] || ! dpkg --compare-versions "$vpl_version" ge 2.6; then
@@ -391,7 +455,9 @@ ffmpeg_options=(
 if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
     ffmpeg_options+=(--enable-vaapi)
 fi
-if [[ "$hw_mode" == intel ]]; then
+if [[ "$hw_mode" == intel && "$qsv_backend" == libmfx ]]; then
+    ffmpeg_options+=(--enable-libmfx)
+elif [[ "$hw_mode" == intel ]]; then
     vpl_version="$(pkg-config --modversion vpl)"
     if ! dpkg --compare-versions "$vpl_version" ge 2.6; then
         printf 'Intel QSV用oneVPL APIのバージョンが古すぎます: %s (必要: >= 2.6)\n' "$vpl_version" >&2
@@ -618,11 +684,7 @@ if [[ "$hw_mode" == intel && "$render_access" == yes ]]; then
     printf '\nQSVの動作テストを実行します。\n'
     if ! qsv_smoke_test; then
         printf '警告: QSVの動作テストに失敗しました。インストール自体は完了しています。\n' >&2
-        libva_version="$(pkg-config --modversion libva 2>/dev/null || true)"
-        if [[ -n "$libva_version" ]] && ! dpkg --compare-versions "$libva_version" ge 2.15; then
-            printf '原因の可能性: libva %s (VA-API 1.14以下)。FFmpegの -init_hw_device qsv には libva 2.15 以上が必要です。\n' "$libva_version" >&2
-            printf 'Ubuntu 22.04のaptのlibvaは2.14のため、新しいlibvaをソースからビルドしてFFmpegに使わせる必要があります。\n' >&2
-        elif [[ "$intel_driver_package" == intel-media-va-driver ]]; then
+        if [[ "$intel_driver_package" == intel-media-va-driver ]]; then
             printf 'free版のiHDでは、GPUによってHEVCなど一部のエンコードが使えない場合があります。\n' >&2
             if apt_has_candidate intel-media-va-driver-non-free &&
                 ask_yes_no 'non-free版 intel-media-va-driver-non-free に入れ替えて再テストしますか? (ライセンス条件を確認してください)' no; then
@@ -672,7 +734,9 @@ fi
 if [[ "$hw_mode" == vaapi || "$hw_mode" == intel ]]; then
     printf '\nドライバーの認識確認には vainfo を使用できます: vainfo --display drm --device %s\n' "${render_node:-/dev/dri/renderD128}"
 fi
-if [[ "$hw_mode" == intel ]]; then
+if [[ "$hw_mode" == intel && "$qsv_backend" == libmfx ]]; then
+    printf 'QSVはIntel Media SDK (libmfx) 版でビルドしました。新しい世代のIntel GPU(Arcなど)に対応しない場合があります。\n'
+elif [[ "$hw_mode" == intel ]]; then
     printf 'libmfx-gen1.2 はIntel Gen12 (Tiger Lake) 以降向けのGPUランタイムです。それより古いIntel GPUでQSVを使う場合はIntel Media SDK系ランタイムが別途必要で、このスクリプトでは導入しません。\n'
 fi
 printf '\nFFmpegのビルド機能を確認しました。実機でエンコードテストしてください。\n'
