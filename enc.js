@@ -100,6 +100,7 @@ function executeTsreadex(inputPath, programId, outputPath) {
 // コマンドライン引数の解析
 const args = process.argv.slice(2);
 let ignoreTags = false;
+let safeMode = false;  // --safe-mode: FORCE_CODEC に関わらず libx264 を強制（debug/fallback用）
 let inputFile = null;
 let jsonFilePath = null;
 let audioComponentType = '0';
@@ -111,6 +112,8 @@ const nonOptionArgs = [];
 for (let i = 0; i < args.length; i++) {
     if (args[i] === '--ignore-tags') {
         ignoreTags = true;
+    } else if (args[i] === '--safe-mode') {
+        safeMode = true;
     } else {
         nonOptionArgs.push(args[i]);
     }
@@ -263,7 +266,7 @@ if (jsonFilePath && fs.existsSync(jsonFilePath)) {
 }
 
 if (!inputFile) {
-    console.error('Usage: node enc.js [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
+    console.error('Usage: node enc.js [--safe-mode] [--ignore-tags] <input_file_path> [input_file.json|audio_component_type] [chap_out.txt] [trim_file.txt]');
     console.error('Example: node enc.js /path/to/番組名.m2ts input_file.json');
     console.error('Example with chapters: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt');
     console.error('Example with trim: node enc.js /path/to/番組名.m2ts input_file.json chap_out.txt jls_out.txt');
@@ -410,6 +413,9 @@ function detectSubtitleStreamsInFile(filePath) {
                 }
             }
         }
+        if (subtitleStreams.length === 0) {
+            console.warn(`No subtitle stream detected by ffprobe in ${path.basename(filePath)}`);
+        }
         return subtitleStreams;
     } catch (error) {
         console.error(`Error detecting subtitle streams in ${filePath}:`, error.message);
@@ -534,6 +540,10 @@ function isIntelGpuPresent() {
 
 // 利用可能な映像コーデックを決定
 function getVideoCodec() {
+    if (safeMode) {
+        console.log('Safe mode: Forcing libx264 (software encode)');
+        return 'libx264';
+    }
     if (FORCE_CODEC) {
         console.log(`Manual override: Using ${FORCE_CODEC}`);
         return FORCE_CODEC;
@@ -1007,10 +1017,127 @@ function parseTrimFile(filePath) {
     return { segments, fps: FPS };
 }
 
-function processSubtitleFile(inputSubPath, outputPath, trimSegments) {
+/**
+* raw ASS の0秒が、映像・音声の時間軸（コンテナstart_time基準）に対して何秒ずれているかを返す。
+* 全Dialogueの開始・終了に加算して使う。
+*
+* ASSの0秒の基準は、ASSの作り手や録画ごとに異なる
+*   ・字幕ストリームの最初のパケットのPTS（ffmpeg）
+*   ・コンテナstart_time（ffmpeg）
+*   ・最初の映像フレームのPTS（a2ac）
+* ため、基準を決め打ちせず、デコード済み字幕フレームの時刻とDialogue開始時刻の差の最頻値から実測する。
+* ffmpegのASS（フレームごとに1行）でも、a2acのASS（空の字幕を省き、文字行ごとに分割）でも同じ方法で求まる。
+*/
+function parseDialogueStarts(assPath) {
+    const starts = [];
+    for (const line of fs.readFileSync(assPath, 'utf8').split('\n')) {
+        if (!line.startsWith('Dialogue:')) continue;
+        const parts = line.split(',');
+        if (parts.length >= 10) starts.push(parseAssTime(parts[1]));
+    }
+    return starts;
+}
+
+/**
+* frameTimes（デコード済み字幕フレームのコンテナ基準秒）と assStarts（ASSのDialogue開始秒）から、
+* 「frame = ASS開始 + shift」が最も多く成り立つ shift を返す。
+* 一致が十分でなければ null（呼び出し側でフォールバック）。
+*/
+function estimateAssOffset(frameTimes, assStarts, binWidth = 0.02, maxShift = 120) {
+    const uniq = [...new Set(assStarts.map(a => Math.round(a * 100)))].map(v => v / 100);
+    if (uniq.length === 0 || frameTimes.length === 0) return null;
+
+    const hist = new Map();
+    for (const a of uniq) {
+        const bins = new Set();
+        for (const f of frameTimes) {
+            const d = f - a;
+            if (d < -maxShift || d > maxShift) continue;
+            bins.add(Math.round(d / binWidth));
+        }
+        for (const k of bins) hist.set(k, (hist.get(k) || 0) + 1);
+    }
+
+    // 隣接3ビンの合計が最大の位置（量子化の境目をまたぐ分を拾う）。同点なら0に近い方
+    let bestK = null, bestScore = 0;
+    for (const k of hist.keys()) {
+        const score = (hist.get(k - 1) || 0) + hist.get(k) + (hist.get(k + 1) || 0);
+        if (score > bestScore || (score === bestScore && Math.abs(k) < Math.abs(bestK))) {
+            bestScore = score;
+            bestK = k;
+        }
+    }
+    const matched = Math.min(bestScore, uniq.length);
+    if (matched < 2 || matched / uniq.length < 0.5) return null;
+
+    // ピーク付近の差を平均して精度を上げる
+    let sum = 0, n = 0;
+    for (const a of uniq) {
+        for (const f of frameTimes) {
+            const d = f - a;
+            if (Math.abs(d - bestK * binWidth) <= binWidth * 1.5) { sum += d; n++; }
+        }
+    }
+    return { shift: sum / n, matched, total: uniq.length };
+}
+
+function probeSubtitleTiming(filePath, streamIndex) {
+    const run = (extra) => execFileSync(getEnv('FFPROBE'), [
+        '-v', 'error', ...getAnalyze(), ...extra, filePath
+    ], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 200, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+
+    const containerStart = parseFloat(run(['-show_entries', 'format=start_time', '-of', 'default=nw=1:nk=1']));
+    if (!Number.isFinite(containerStart)) throw new Error('container start_time unavailable');
+
+    const frameTimes = [];
+    const frameOut = run([
+        '-select_streams', String(streamIndex),
+        '-show_frames', '-show_entries', 'frame=pts_time',
+        '-of', 'compact'
+    ]);
+    for (const line of frameOut.split('\n')) {
+        const m = line.match(/pts_time=(-?\d+(?:\.\d+)?)/);  // PTSラップ付近の録画は負の値になる
+        if (m) frameTimes.push(parseFloat(m[1]) - containerStart);
+    }
+
+    let firstPacket = null;
+    try {
+        const v = parseFloat(run([
+            '-select_streams', String(streamIndex),
+            '-show_entries', 'packet=pts_time',
+            '-read_intervals', '%+#1',
+            '-of', 'csv=p=0'
+        ]).split('\n')[0]);
+        if (Number.isFinite(v)) firstPacket = v - containerStart;
+    } catch (e) { /* ignore */ }
+
+    return { containerStart, frameTimes, firstPacket };
+}
+
+function getSubtitleTimeShift(filePath, streamIndex, rawAssPath) {
+    try {
+        const t = probeSubtitleTiming(filePath, streamIndex);
+        const est = estimateAssOffset(t.frameTimes, parseDialogueStarts(rawAssPath));
+        if (est) {
+            console.log(`Subtitle time shift for stream ${streamIndex}: ${est.shift.toFixed(3)}s ` +
+                `(calibrated: ${est.matched}/${est.total} ASS start times matched decoded subtitle frames, containerStart=${t.containerStart})`);
+            return est.shift;
+        }
+        const fallback = t.firstPacket !== null ? t.firstPacket : 0;
+        console.warn(`Subtitle time shift for stream ${streamIndex}: calibration failed (frames=${t.frameTimes.length}); ` +
+            `falling back to first-packet offset ${fallback.toFixed(3)}s`);
+        return fallback;
+    } catch (e) {
+        console.warn(`Subtitle shift detection failed for stream ${streamIndex}: ${e.message}; using 0`);
+        return 0;
+    }
+}
+
+function processSubtitleFile(inputSubPath, outputPath, trimSegments, shiftSec = 0) {
     const content = fs.readFileSync(inputSubPath, 'utf8');
     const lines = content.split('\n');
     const outputLines = [];
+    console.log(`Subtitle timing: shift ${shiftSec.toFixed(3)}s`);
 
     let accumulatedOffset = 0;
     const segmentOffsets = [];
@@ -1033,8 +1160,8 @@ function processSubtitleFile(inputSubPath, outputPath, trimSegments) {
             // Dialogue行のトリム処理
             const parts = line.split(',');
             if (parts.length >= 10) {
-                const start = parseAssTime(parts[1]);
-                const end = parseAssTime(parts[2]);
+                const start = parseAssTime(parts[1]) + shiftSec;
+                const end = parseAssTime(parts[2]) + shiftSec;
 
                 let mappedStart = null;
                 let mappedEnd = null;
@@ -1077,6 +1204,95 @@ function processSubtitleFile(inputSubPath, outputPath, trimSegments) {
 
     fs.writeFileSync(outputPath, outputLines.join('\n'));
     console.log(`Trimmed subtitle saved: ${outputPath}`);
+}
+
+function getA2acSubtitleOptions() {
+    const drcsConfigPath = path.resolve('drcs-conv.toml');
+    if (!fs.existsSync(drcsConfigPath) || !fs.statSync(drcsConfigPath).isFile()) {
+        console.log('DRCS Unicode subtitle skipped: drcs-conv.toml not found in current directory');
+        return null;
+    }
+
+    const a2acCheck = spawnSync('a2ac', ['--help'], {
+        stdio: 'ignore',
+        shell: false
+    });
+    if (a2acCheck.error) {
+        console.log('DRCS Unicode subtitle skipped: a2ac is not available');
+        return null;
+    }
+
+    const fontResult = spawnSync('fc-match', ['-f', '%{file}\n', 'sans-serif'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false
+    });
+    if (fontResult.error || fontResult.status !== 0) {
+        console.log('DRCS Unicode subtitle skipped: fc-match is not available');
+        return null;
+    }
+
+    const fontPath = fontResult.stdout.split(/\r?\n/).find(line => line.trim());
+    if (!fontPath || !fs.existsSync(fontPath) || !fs.statSync(fontPath).isFile()) {
+        console.log('DRCS Unicode subtitle skipped: fc-match did not return an existing font file');
+        return null;
+    }
+
+    return { drcsConfigPath, fontPath };
+}
+
+function extractUnicodeSubtitle(inputPath, outputPath, options = getA2acSubtitleOptions()) {
+    if (!options) return false;
+
+    try {
+        execFileSync('a2ac', [
+            '-D', options.drcsConfigPath,
+            'ass',
+            '-f', options.fontPath,
+            '-o', outputPath,
+            inputPath
+        ], {
+            timeout: 600000,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+            throw new Error('a2ac did not create a non-empty ASS file');
+        }
+        return true;
+    } catch (error) {
+        try { fs.unlinkSync(outputPath); } catch (e) {}
+        throw error;
+    }
+}
+
+function createUnicodeSubtitle(inputPath, outputPath, trimSegments = null) {
+    const rawAssPath = `./work_${process.pid}_unicode_raw.ass`;
+    try {
+        if (!extractUnicodeSubtitle(inputPath, rawAssPath)) return false;
+
+        let subtitleSegments = trimSegments;
+        if (!subtitleSegments) {
+            const durationSec = getVideoDuration(inputPath);
+            const endSec = Number.isFinite(durationSec) ? durationSec : Number.MAX_SAFE_INTEGER;
+            if (endSec <= fixedCutSecond) {
+                throw new Error(`Input duration (${endSec}s) is not longer than the ${fixedCutSecond}s video cut`);
+            }
+            subtitleSegments = [{
+                startSec: fixedCutSecond,
+                endSec,
+                duration: endSec - fixedCutSecond
+            }];
+        }
+
+        const subtitleStreams = detectSubtitleStreamsInFile(inputPath);
+        const shift = subtitleStreams.length > 0 ? getSubtitleTimeShift(inputPath, subtitleStreams[0], rawAssPath) : 0;
+        processSubtitleFile(rawAssPath, outputPath, subtitleSegments, shift);
+        console.log(`DRCS Unicode subtitle saved: ${outputPath}`);
+        return true;
+    } finally {
+        try { fs.unlinkSync(rawAssPath); } catch (e) {}
+    }
 }
 
 // トリムモード用チャプターパース
@@ -1338,24 +1554,51 @@ function getCodecSpecificArgs(useCodec) {
 
                 // 字幕抽出
                 const rawAssFiles = [];
-                const hasSubtitles = hasLibaribb24 && /\[字\]/.test(inputFileName) && !ignoreTags;
+                const rawAssShifts = [];
+                const hasSubtitleTag = /\[字\]/.test(inputFileName) && !ignoreTags;
+                const a2acOptions = hasSubtitleTag ? getA2acSubtitleOptions() : null;
+                const hasSubtitles = (hasLibaribb24 || a2acOptions) && hasSubtitleTag;
+                if (!hasSubtitles) {
+                    console.log(`Subtitle extraction skipped (libaribb24=${hasLibaribb24}, a2ac=${Boolean(a2acOptions)}, [字] in name=${/\[字\]/.test(inputFileName)}, ignoreTags=${ignoreTags})`);
+                }
                 if (hasSubtitles) {
                     const subtitleStreams = detectSubtitleStreamsInFile(inputFile);
                     for (let i = 0; i < subtitleStreams.length; i++) {
                         const rawAssFile = `${workPrefix}_raw_${i}.ass`;
                         try {
-                            execFileSync(getEnv('FFMPEG'), [
-                                '-hide_banner', '-loglevel', 'error', '-y',
-                                '-fix_sub_duration',
-                                '-i', inputFile,
-                                '-map', `0:${subtitleStreams[i]}`,
-                                '-c:s', 'ass',
-                                rawAssFile
-                            ], { timeout: 120000 });
+                            let extractedWithA2ac = false;
+                            if (i === 0) {
+                                try {
+                                    extractedWithA2ac = extractUnicodeSubtitle(inputFile, rawAssFile, a2acOptions);
+                                    if (extractedWithA2ac) {
+                                        console.log(`Extracted Unicode ASS stream ${i + 1} with a2ac:`, rawAssFile);
+                                    }
+                                } catch (error) {
+                                    console.error('a2ac subtitle extraction failed; falling back to ffmpeg ASS extraction:', error.message);
+                                    if (error.stderr) {
+                                        console.error(`a2ac stderr: ${String(error.stderr).slice(-2000)}`);
+                                    }
+                                }
+                            }
+                            if (!extractedWithA2ac) {
+                                execFileSync(getEnv('FFMPEG'), [
+                                    '-hide_banner', '-loglevel', 'error', '-y',
+                                    '-fix_sub_duration',
+                                    '-i', inputFile,
+                                    '-map', `0:${subtitleStreams[i]}`,
+                                    '-c:s', 'ass',
+                                    rawAssFile
+                                ], { timeout: 600000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+                            }
                             rawAssFiles.push(rawAssFile);
-                            console.log(`Extracted raw ASS stream ${i + 1}:`, rawAssFile);
+                            rawAssShifts.push(getSubtitleTimeShift(inputFile, subtitleStreams[i], rawAssFile));
+                            if (!extractedWithA2ac) {
+                                console.log(`Extracted raw ASS stream ${i + 1}:`, rawAssFile);
+                            }
                         } catch (e) {
                             console.error(`ASS extraction failed for stream ${subtitleStreams[i]}:`, e.message);
+                            if (e.code) console.error(`  code=${e.code} signal=${e.signal || ''}`);
+                            if (e.stderr) console.error(`  ffmpeg stderr: ${String(e.stderr).slice(-2000)}`);
                         }
                     }
                 }
@@ -1409,7 +1652,7 @@ function getCodecSpecificArgs(useCodec) {
                     if (fs.existsSync(rawAssFiles[i])) {
                         const suffix = i === 0 ? '' : `.${i + 1}`;
                         const finalAss = `./${inputFileName}.ja${suffix}.ass`;
-                        processSubtitleFile(rawAssFiles[i], finalAss, segments);
+                        processSubtitleFile(rawAssFiles[i], finalAss, segments, rawAssShifts[i]);
                     }
                 }
 
@@ -1566,6 +1809,17 @@ function getCodecSpecificArgs(useCodec) {
                 ignoreTags: ignoreTags
             };
 
+            if (!isError && sub.isSub && !ignoreTags) {
+                try {
+                    createUnicodeSubtitle(inputFile, `./${inputFileName}.ja.ass`);
+                } catch (error) {
+                    console.error('DRCS Unicode subtitle generation failed; the MP4 encode remains successful:', error.message);
+                    if (error.stderr) {
+                        console.error(`a2ac stderr: ${String(error.stderr).slice(-2000)}`);
+                    }
+                }
+            }
+
             if (isError) {
                 console.error('Error code:', code, logs);
             } else {
@@ -1591,4 +1845,3 @@ function getCodecSpecificArgs(useCodec) {
 // https://note.com/leal_walrus5520/n/n74a7c7561d43
 // https://note.com/leal_walrus5520/n/nb560315013e3
 // https://note.com/leal_walrus5520/n/n2d01e784a813
-// Time stamp: 2026/09/12
