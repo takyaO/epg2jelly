@@ -1347,7 +1347,7 @@ function createChapterMetadataFile(chapters, baseDir = './') {
     return metaFile;
 }
 
-function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile) {
+function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile, onChild = null) {
     return new Promise((resolve, reject) => {
         const listFile = `./concat_${process.pid}.txt`;  
 
@@ -1375,12 +1375,14 @@ function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile) {
         ];
 
         const child = spawn(getEnv('FFMPEG'), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        if (onChild) onChild(child);
         
         //  エラー詳細をキャプチャして表示
         let stderr = '';
         child.stderr.on('data', data => { stderr += data; });
 
         child.on('exit', code => {
+            if (onChild) onChild(null);
             try { fs.unlinkSync(listFile); } catch(e){}
             if (code === 0) {
                 resolve();
@@ -1392,7 +1394,7 @@ function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile) {
     });
 }
 
-function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, audioCodec, audioMetadata = []) {
+function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, audioCodec, audioMetadata = [], onChild = null) {
     const vaapiDevice = videoCodec.includes('vaapi') ? ['-vaapi_device', '/dev/dri/renderD128'] : [];
 
     const args = [
@@ -1416,9 +1418,11 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
     
     return new Promise((resolve, reject) => {
         const child = spawn(getEnv('FFMPEG'), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        if (onChild) onChild(child);
         let stderr = '';
         child.stderr.on('data', data => { stderr += data; });
         child.on('exit', code => {
+            if (onChild) onChild(null);
             if (code === 0) {
                 if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
                     reject(new Error(`Output file not created: ${outputPath}`));
@@ -1527,6 +1531,55 @@ function getCodecSpecificArgs(useCodec) {
             const workPrefix = `./work_${process.pid}`;
             const concatListFile = `./concat_${process.pid}.txt`;
             const startTime = process.uptime(); //  開始時間記録
+            const workFiles = new Set([concatListFile]);
+            let activeChild = null;
+
+            const cleanupWorkFiles = () => {
+                for (const file of workFiles) {
+                    try {
+                        fs.unlinkSync(file);
+                    } catch (error) {
+                        if (error.code !== 'ENOENT') {
+                            console.error(`Failed to cleanup work file ${file}:`, error.message);
+                        }
+                    }
+                }
+                if (shouldDeleteTemp && tempCleanFile) {
+                    try {
+                        fs.unlinkSync(tempCleanFile);
+                    } catch (error) {
+                        if (error.code !== 'ENOENT') {
+                            console.error(`Failed to cleanup temporary input ${tempCleanFile}:`, error.message);
+                        }
+                    }
+                }
+            };
+
+            const handleAbort = signal => {
+                console.error(`Received ${signal}; cleaning up trim work files.`);
+                const exitCode = signal === 'SIGINT' ? 130 : 143;
+                const finishAbort = () => {
+                    cleanupWorkFiles();
+                    process.exit(exitCode);
+                };
+
+                const child = activeChild;
+                if (child && child.exitCode === null && child.signalCode === null) {
+                    child.once('exit', finishAbort);
+                    child.kill(signal);
+                    const forceKillTimer = setTimeout(() => {
+                        if (child.exitCode === null && child.signalCode === null) {
+                            child.kill('SIGKILL');
+                        }
+                    }, 1000);
+                    forceKillTimer.unref();
+                } else {
+                    finishAbort();
+                }
+            };
+
+            process.once('SIGINT', () => handleAbort('SIGINT'));
+            process.once('SIGTERM', () => handleAbort('SIGTERM'));
 
             try {
                 const { segments } = parseTrimFile(trimFilePath);
@@ -1565,6 +1618,7 @@ function getCodecSpecificArgs(useCodec) {
                     const subtitleStreams = detectSubtitleStreamsInFile(inputFile);
                     for (let i = 0; i < subtitleStreams.length; i++) {
                         const rawAssFile = `${workPrefix}_raw_${i}.ass`;
+                        workFiles.add(rawAssFile);
                         try {
                             let extractedWithA2ac = false;
                             if (i === 0) {
@@ -1608,7 +1662,10 @@ function getCodecSpecificArgs(useCodec) {
                 for (let i = 0; i < segments.length; i++) {
                     const seg = segments[i];
                     const partFile = `${workPrefix}_part_${i}.mp4`;
-                    await encodeSegment(inputFile, partFile, seg.startSec, seg.duration, useCodec, audioCodec, audioMetadata);
+                    workFiles.add(partFile);
+                    await encodeSegment(inputFile, partFile, seg.startSec, seg.duration, useCodec, audioCodec, audioMetadata, child => {
+                        activeChild = child;
+                    });
                     partFiles.push(partFile);
                 }
 
@@ -1624,6 +1681,7 @@ function getCodecSpecificArgs(useCodec) {
                 const chapters = chapterFilePath ? parseChapterFile(chapterFilePath, segments) : null;
                 const chapterMetaFile = chapters ? `${workPrefix}_chapters.ffmeta` : null;
                 if (chapterMetaFile && chapters) {
+                    workFiles.add(chapterMetaFile);
                     let metaContent = ';FFMETADATA1\n';
                     for (const chap of chapters) {
                         metaContent += '[CHAPTER]\n';
@@ -1645,7 +1703,9 @@ function getCodecSpecificArgs(useCodec) {
                     ...metadataArgs
                 ];
 
-                await concatenateParts(partFiles, outputFile, metadataArgs, chapterMetaFile);
+                await concatenateParts(partFiles, outputFile, metadataArgs, chapterMetaFile, child => {
+                    activeChild = child;
+                });
 
                 // ASS処理
                 for (let i = 0; i < rawAssFiles.length; i++) {
@@ -1679,18 +1739,13 @@ function getCodecSpecificArgs(useCodec) {
                 console.log('Successfully encoded:', logs);
 
                 // === クリーンアップ ===
-                for (const f of partFiles) { try { fs.unlinkSync(f); } catch(e){} }
-                try { fs.unlinkSync(concatListFile); } catch(e){}
-                for (const rawAssFile of rawAssFiles) { try { fs.unlinkSync(rawAssFile); } catch(e){} }
-                if (chapterMetaFile) { try { fs.unlinkSync(chapterMetaFile); } catch(e){} }
-                if (shouldDeleteTemp && tempCleanFile) { try { fs.unlinkSync(tempCleanFile); } catch(e){} }
+                cleanupWorkFiles();
                 
                 process.exit(0);
 
             } catch (error) {
                 const elapsed = parseFloat(process.uptime() - startTime);
                 console.error('Trim mode error:', error);
-                console.log(`Work files may remain with prefix: ${workPrefix}`);
                 
                 // エラー時もログ出力
                 console.error('Error details:', {
@@ -1702,8 +1757,7 @@ function getCodecSpecificArgs(useCodec) {
                 });
 
                 // エラー時もクリーンアップを試行
-                try { fs.unlinkSync(concatListFile); } catch(e){}
-                if (shouldDeleteTemp && tempCleanFile) { try { fs.unlinkSync(tempCleanFile); } catch(e){} }
+                cleanupWorkFiles();
                 process.exit(1);
             }
         })();
