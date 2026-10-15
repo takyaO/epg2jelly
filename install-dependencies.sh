@@ -256,7 +256,7 @@ fi
 
 packages=(
     build-essential cmake ninja-build checkinstall pkg-config git curl jq bc nasm yasm
-    nodejs npm python3
+    python3
     autoconf automake libtool meson
     libmp3lame-dev libopus-dev libvorbis-dev libvpx-dev libx264-dev libx265-dev
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
@@ -264,6 +264,9 @@ packages=(
     libaribb24-dev libatomic-ops-dev libdevil-dev libsoundtouch-dev libxml2-dev
     libfontconfig1-dev fontconfig libdrm-dev libfdk-aac-dev
 )
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    packages+=(nodejs npm)
+fi
 qsv_backend=none
 case "$hw_mode" in
     vaapi)
@@ -381,6 +384,13 @@ if [[ "$with_wine" == yes ]]; then
             fi
             printf 'winetricks allfonts を実行します。追加表示される個別ライセンス確認にも従ってください。\n'
             winetricks allfonts
+	    # 日本語アプリ向けに MS ゴシック系をVLGothicへ置換する(winetricksのallfontsには置換設定が含まれない)
+	    for font_pair in 'MS Gothic|VL Gothic' 'MS UI Gothic|VL Gothic' 'MS PGothic|VL PGothic'; do
+		if ! wine reg add 'HKCU\Software\Wine\Fonts\Replacements' \
+		     /v "${font_pair%%|*}" /t REG_SZ /d "${font_pair##*|}" /f >/dev/null 2>&1; then
+		    printf '警告: フォント置換 %s の登録に失敗しました。\n' "${font_pair%%|*}" >&2
+		fi
+	    done
         fi
     fi
 fi
