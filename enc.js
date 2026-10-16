@@ -775,7 +775,7 @@ function isTs() {
 }
 
 function getAnalyze() {
-    return ['-analyzeduration', '100M', '-probesize', '100M'];
+    return ['-analyzeduration', '20M', '-probesize', '20M'];
 }
 
 function convertSecToTime(second) {
@@ -1810,7 +1810,6 @@ function getCodecSpecificArgs(useCodec) {
 
 	const outputArgs = [
 	    '-y',
-	    ...getAnalyze(),
 	    ...inputOptions,
 	    '-i', getEnv('INPUT'),
 	    ...chapterInputArgs,
