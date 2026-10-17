@@ -57,60 +57,113 @@ apt_has_candidate() {
 # 実運用(enc.js)と同じく -init_hw_device で明示的にQSVデバイスを作成する。
 # (暗黙のセッション作成だけでは、libvaが古い環境の失敗を検出できない)
 qsv_smoke_test() {
-    local encoder
+    local encoder error_output
     for encoder in h264_qsv hevc_qsv; do
-        if ! timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
+        if ! error_output="$(timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
             -init_hw_device qsv=qsv:hw \
             -f lavfi -i testsrc2=size=1280x720:rate=30:duration=1 \
-            -pix_fmt nv12 -c:v "$encoder" -f null - >/dev/null 2>&1; then
+            -pix_fmt nv12 -c:v "$encoder" -f null - 2>&1 >/dev/null)"; then
             printf '  %s: 失敗\n' "$encoder" >&2
+            printf '%s\n' "$error_output" | tail -n 5 | sed 's/^/      /' >&2
             return 1
         fi
         printf '  %s: OK\n' "$encoder"
     done
 }
 
-# システムのlibvaバージョンを返す(導入済みならpkg-config、未導入ならAPT候補)。取得できなければ空。
-detect_libva_version() {
+have_command() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# nodejsのAPT候補がnpmを内包しているか(NodeSource版などは npm パッケージと競合する)。
+nodejs_bundles_npm() {
+    local candidate
+    candidate="$(LC_ALL=C apt-cache policy nodejs 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
+    if [[ -z "$candidate" || "$candidate" == '(none)' ]]; then
+        return 1
+    fi
+    LC_ALL=C apt-cache show "nodejs=$candidate" 2>/dev/null | grep -Eq '^Conflicts:.*[ ,]npm([ ,(]|$)'
+}
+
+# システムのlibvaのマイナーバージョン番号(VA-API 1.N の N)を返す。取得できなければ空。
+# pkg-configはVA-APIのバージョン(1.N.x)、APTのパッケージ版は 2.N.x を返す。体系が異なるため、どちらもNだけを取り出す。
+detect_libva_minor() {
     local version
     version="$(pkg-config --modversion libva 2>/dev/null || true)"
     if [[ -z "$version" ]]; then
         version="$(LC_ALL=C apt-cache policy libva-dev 2>/dev/null | awk '/Candidate:/ { print $2; exit }' || true)"
     fi
-    if [[ "$version" == '(none)' ]]; then
-        version=''
+    if [[ "$version" =~ ^([0-9]+:)?[0-9]+\.([0-9]+) ]]; then
+        printf '%s\n' "${BASH_REMATCH[2]}"
     fi
-    printf '%s\n' "$version"
+    return 0
 }
 
 # FFmpegのQSVバックエンドを決める。libvpl(oneVPL)版の明示的なQSVデバイス作成(-init_hw_device qsv)は、
 # libva 2.15以上とVA-API 1.15以上対応のドライバーが必要。それ未満(Ubuntu 22.04のapt構成など)ではlibmfx(Media SDK)版を使う。
 choose_qsv_backend() {
-    local libva_ver
-    libva_ver="$(detect_libva_version)"
-    if [[ -n "$libva_ver" ]] && ! dpkg --compare-versions "$libva_ver" ge 2.15; then
+    local minor
+    minor="$(detect_libva_minor)"
+    if [[ -n "$minor" ]] && (( minor < 15 )); then
         printf 'libmfx\n'
     else
         printf 'libvpl\n'
     fi
 }
 
+# Intel Media SDKのランタイム(libmfx1)を導入する。Tiger Lake未満のIntel GPUで、libvpl経由のQSVを使うために必要。
+# 新しいUbuntu(26.04など)のAPTには無いため、その場合はUbuntu 24.04(noble)のアーカイブから署名検証つきで取得する。
+install_media_sdk_runtime() {
+    local keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg work log deb
+    local manual_url=http://archive.ubuntu.com/ubuntu/pool/universe/i/intel-mediasdk/libmfx1_22.5.4-1_amd64.deb
+    if apt_has_candidate libmfx1; then
+        install_packages libmfx1
+        return
+    fi
+    if [[ ! -r "$keyring" ]]; then
+        printf '警告: libmfx1がAPTに無く、Ubuntu以外のため自動取得できません。\n' >&2
+        return 1
+    fi
+    work="$BUILD_DIR/noble-apt"
+    mkdir -p "$work/lists/partial" "$work/cache/archives/partial"
+    printf 'deb [arch=amd64 signed-by=%s] http://archive.ubuntu.com/ubuntu noble universe\n' "$keyring" > "$work/noble.list"
+    local apt_opts=(-o "Dir::Etc::sourcelist=$work/noble.list" -o 'Dir::Etc::sourceparts=-'
+        -o "Dir::State::lists=$work/lists" -o "Dir::Cache=$work/cache")
+    if ! log="$(apt-get "${apt_opts[@]}" update 2>&1)"; then
+        printf '%s\n' "$log" | tail -n 5 >&2
+        printf '警告: Ubuntu 24.04のパッケージ情報を取得できませんでした。手動で導入する場合: curl -fLO %s && sudo apt install ./%s\n' "$manual_url" "${manual_url##*/}" >&2
+        return 1
+    fi
+    if ! log="$(cd "$work" && apt-get "${apt_opts[@]}" download libmfx1 2>&1)"; then
+        printf '%s\n' "$log" | tail -n 5 >&2
+        printf '警告: libmfx1を取得できませんでした。手動で導入する場合: curl -fLO %s && sudo apt install ./%s\n' "$manual_url" "${manual_url##*/}" >&2
+        return 1
+    fi
+    deb="$(compgen -G "$work/libmfx1_*_amd64.deb" | head -n 1 || true)"
+    if [[ -z "$deb" ]]; then
+        printf '警告: 取得したlibmfx1のパッケージファイルが見つかりません。\n' >&2
+        return 1
+    fi
+    "${SUDO[@]}" apt-get install -y --no-install-recommends "$deb"
+}
+
 # VAAPIで実際にエンコードできるか、アクセス可能な全レンダーノードで短い合成映像を試す。
 # 1つ以上のノードで全エンコーダーが成功すれば成功(複数GPU環境では使えるノードも表示する)。
 vaapi_smoke_test() {
-    local node encoder failed ok_nodes=()
+    local node encoder failed error_output ok_nodes=()
     for node in /dev/dri/renderD*; do
         [[ -e "$node" && -r "$node" && -w "$node" ]] || continue
         failed=no
         printf '  %s\n' "$node"
         for encoder in "$@"; do
-            if timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
+            if error_output="$(timeout 60 /usr/local/bin/ffmpeg -hide_banner -loglevel error -nostdin \
                 -vaapi_device "$node" \
                 -f lavfi -i testsrc2=size=1280x720:rate=30:duration=1 \
-                -vf 'format=nv12,hwupload' -c:v "$encoder" -f null - >/dev/null 2>&1; then
+                -vf 'format=nv12,hwupload' -c:v "$encoder" -f null - 2>&1 >/dev/null)"; then
                 printf '    %s: OK\n' "$encoder"
             else
                 printf '    %s: 失敗\n' "$encoder"
+                printf '%s\n' "$error_output" | tail -n 5 | sed 's/^/        /'
                 failed=yes
             fi
         done
@@ -183,8 +236,10 @@ case "$gpu" in
         # QSVはVAAPIを含む上位の選択肢。QSV用パッケージがAPTで見つかる場合はQSVを推奨する。
         if [[ "$(choose_qsv_backend)" == libmfx ]]; then
             qsv_menu_packages=(libmfx-dev libmfx1)
+            qsv_menu_gpu='Broadwell以降のIntel GPU向け'
         else
             qsv_menu_packages=(libvpl-dev libvpl2)
+            qsv_menu_gpu='Tiger Lake以降のIntel GPU向け。それ以前はVAAPIのみを選択'
         fi
         qsv_menu_ready=yes
         for qsv_menu_package in "${qsv_menu_packages[@]}"; do
@@ -194,7 +249,7 @@ case "$gpu" in
         done
         if [[ "$qsv_menu_ready" == yes ]]; then
             hw_modes=(intel vaapi cpu)
-            hw_labels=('Intel QSV + VAAPI (推奨。Broadwell以降のIntel GPU向け)' 'VAAPIのみ (旧世代向けのi965ドライバーも選択可)' 'CPUのみ (libx264)')
+            hw_labels=("Intel QSV + VAAPI (推奨。$qsv_menu_gpu)" 'VAAPIのみ (旧世代向けのi965ドライバーも選択可)' 'CPUのみ (libx264)')
         else
             hw_modes=(vaapi intel cpu)
             hw_labels=('VAAPI (推奨)' 'Intel QSV + VAAPI (現在のAPT情報ではQSV用パッケージが見つかりません。導入に失敗する可能性があります)' 'CPUのみ (libx264)')
@@ -264,9 +319,6 @@ packages=(
     libaribb24-dev libatomic-ops-dev libdevil-dev libsoundtouch-dev libxml2-dev
     libfontconfig1-dev fontconfig libdrm-dev libfdk-aac-dev
 )
-if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    packages+=(nodejs npm)
-fi
 qsv_backend=none
 case "$hw_mode" in
     vaapi)
@@ -286,7 +338,7 @@ case "$hw_mode" in
         # Intel Media SDK(libmfx)版を使う。
         qsv_backend="$(choose_qsv_backend)"
         if [[ "$qsv_backend" == libmfx ]]; then
-            printf '注意: システムのlibva %s は2.15未満のため、libvpl(oneVPL)版では -init_hw_device qsv が動作しません。\n' "$(detect_libva_version)"
+            printf '注意: システムのlibva (VA-API 1.%s) は1.15未満のため、libvpl(oneVPL)版では -init_hw_device qsv が動作しません。\n' "$(detect_libva_minor)"
             printf 'Intel Media SDK (libmfx) 版のQSVを使用します。Media SDKは新しい世代のIntel GPU(Arcなど)に対応しない場合があります。\n'
             printf 'そのようなGPUでは、libvaとドライバーが新しいディストリビューション(Ubuntu 24.04以降など)を使用してください。\n'
         fi
@@ -338,6 +390,16 @@ elif [[ "$hw_mode" == intel ]]; then
         packages=("${qsv_packages[@]}")
     fi
 fi
+# nodejs/npm: 導入済みならそのまま使う。未導入なら、npmを内包するnodejs(NodeSource版など)かどうかで導入するパッケージを変える。
+# (npmを内包するnodejsにUbuntu/Debianのnpmパッケージを併せて指定すると、依存関係が競合して導入に失敗する)
+if ! have_command node; then
+    packages+=(nodejs)
+    if ! have_command npm && ! nodejs_bundles_npm; then
+        packages+=(npm)
+    fi
+elif ! have_command npm; then
+    packages+=(npm)
+fi
 install_packages "${packages[@]}"
 if [[ "$hw_mode" == intel && "$qsv_backend" == libvpl ]]; then
     # libvpl-dev が提供するpkg-config名は vpl (libvpl ではない)。2.6はoneVPLのAPIバージョン。
@@ -384,13 +446,6 @@ if [[ "$with_wine" == yes ]]; then
             fi
             printf 'winetricks allfonts を実行します。追加表示される個別ライセンス確認にも従ってください。\n'
             winetricks allfonts
-	    # 日本語アプリ向けに MS ゴシック系をVLGothicへ置換する(winetricksのallfontsには置換設定が含まれない)
-	    for font_pair in 'MS Gothic|VL Gothic' 'MS UI Gothic|VL Gothic' 'MS PGothic|VL PGothic'; do
-		if ! wine reg add 'HKCU\Software\Wine\Fonts\Replacements' \
-		     /v "${font_pair%%|*}" /t REG_SZ /d "${font_pair##*|}" /f >/dev/null 2>&1; then
-		    printf '警告: フォント置換 %s の登録に失敗しました。\n' "${font_pair%%|*}" >&2
-		fi
-	    done
         fi
     fi
 fi
@@ -694,7 +749,25 @@ if [[ "$hw_mode" == intel && "$render_access" == yes ]]; then
     printf '\nQSVの動作テストを実行します。\n'
     if ! qsv_smoke_test; then
         printf '警告: QSVの動作テストに失敗しました。インストール自体は完了しています。\n' >&2
-        if [[ "$intel_driver_package" == intel-media-va-driver ]]; then
+        qsv_recovered=no
+        if [[ "$qsv_backend" == libvpl ]]; then
+            printf 'libvpl(oneVPL)版のGPUランタイム(libmfx-gen)は、Tiger Lake以降のIntel GPU向けです。\n' >&2
+            printf 'それ以前のGPU(Skylake〜Comet Lakeなど)でQSVを使うには、Intel Media SDKのランタイム(libmfx1)が必要です。\n' >&2
+            if ! dpkg -s libmfx1 >/dev/null 2>&1 &&
+                ask_yes_no 'Media SDKのランタイム(libmfx1)を導入して再テストしますか? (APTに無い場合は、Ubuntu 24.04のパッケージを署名検証つきで取得します)' yes; then
+                if install_media_sdk_runtime; then
+                    printf '\nQSVの動作テストを再実行します。\n'
+                    if qsv_smoke_test; then
+                        qsv_recovered=yes
+                    else
+                        printf '警告: Media SDKのランタイムを追加してもQSVの動作テストに失敗しました。\n' >&2
+                    fi
+                fi
+            fi
+        fi
+        if [[ "$qsv_recovered" == yes ]]; then
+            printf 'Media SDKのランタイムを追加して、QSVが利用可能になりました。\n'
+        elif [[ "$intel_driver_package" == intel-media-va-driver ]]; then
             printf 'free版のiHDでは、GPUによってHEVCなど一部のエンコードが使えない場合があります。\n' >&2
             if apt_has_candidate intel-media-va-driver-non-free &&
                 ask_yes_no 'non-free版 intel-media-va-driver-non-free に入れ替えて再テストしますか? (ライセンス条件を確認してください)' no; then
