@@ -3,7 +3,7 @@
 const FORCE_CODEC = ''; 
 // 手動で固定したい場合はここに書く（hevc_qsv, hevc_vaapi, h264_qsv, h264_vaapi, libx264 から選択
 // 空 '' にすると自動判定
-// ffmpeg オプションは useCodecPreArgs, useCodecPostArgs.push
+// ffmpeg オプションは useCodec
 
 // モジュールの読み込み
 const { spawn } = require('child_process');

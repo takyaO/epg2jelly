@@ -179,3 +179,9 @@ OpenAI Whisperを使ってみる
 [第30回：正式リリース(Ver.1.0)](https://note.com/leal_walrus5520/n/n6bb1f4231910)
 
 enc.js マニュアル
+
+[第31回：アップデート ver 1.1](https://note.com/leal_walrus5520/n/n10bdb083fad5)
+
+インストーラーの説明
+
+
