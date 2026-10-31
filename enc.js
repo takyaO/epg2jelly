@@ -1385,7 +1385,7 @@ function concatenateParts(partFiles, outputFile, metadataArgs, chapterFile, onCh
             if (onChild) onChild(null);
             try { fs.unlinkSync(listFile); } catch(e){}
             if (code === 0) {
-                resolve();
+                resolve(args);
             } else {
                 console.error('Concat stderr:', stderr); // エラー詳細表示
                 reject(new Error(`Concatenation failed: ${stderr}`));
@@ -1427,7 +1427,7 @@ function encodeSegment(inputPath, outputPath, startSec, duration, videoCodec, au
                 if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
                     reject(new Error(`Output file not created: ${outputPath}`));
                 } else {
-                    resolve();
+                    resolve(args);
                 }
             } else {
                 reject(new Error(`Segment encode failed: ${stderr}`));
@@ -1659,13 +1659,15 @@ function getCodecSpecificArgs(useCodec) {
 
                 // セグメントエンコード
                 const partFiles = [];
+                const segmentOutputArgs = [];
                 for (let i = 0; i < segments.length; i++) {
                     const seg = segments[i];
                     const partFile = `${workPrefix}_part_${i}.mp4`;
                     workFiles.add(partFile);
-                    await encodeSegment(inputFile, partFile, seg.startSec, seg.duration, useCodec, audioCodec, audioMetadata, child => {
+                    const args = await encodeSegment(inputFile, partFile, seg.startSec, seg.duration, useCodec, audioCodec, audioMetadata, child => {
                         activeChild = child;
                     });
+                    segmentOutputArgs.push(args);
                     partFiles.push(partFile);
                 }
 
@@ -1693,17 +1695,8 @@ function getCodecSpecificArgs(useCodec) {
                     console.log('Created chapter metadata:', chapterMetaFile);
                 }
 
-                // 結合時の引数（ログ用）
-                const concatArgs = [
-                    '-f', 'concat', '-safe', '0', '-i', concatListFile,
-                    ...(chapterMetaFile ? ['-i', chapterMetaFile] : []),
-                    '-map', '0:v', '-map', '0:a', '-c', 'copy',
-                    '-map_metadata', '-1',
-                    ...(chapterMetaFile ? ['-map_chapters', '1'] : []),
-                    ...metadataArgs
-                ];
-
-                await concatenateParts(partFiles, outputFile, metadataArgs, chapterMetaFile, child => {
+                // 結合時の引数を含む実行コマンドを記録
+                const concatArgs = await concatenateParts(partFiles, outputFile, metadataArgs, chapterMetaFile, child => {
                     activeChild = child;
                 });
 
@@ -1722,7 +1715,10 @@ function getCodecSpecificArgs(useCodec) {
                 // === ログ出力 ===
                 const logs = {
                     mode: 'trim',
-                    outputArgs: concatArgs.join(' '),
+                    outputArgs: segmentOutputArgs.map((args, index) =>
+                        `segment ${index + 1}: ${args.join(' ')}`
+                    ).join('\n'),
+                    concatArgs: concatArgs.join(' '),
                     duration: convertSecToTime(durationSec),
                     elapsedTime: convertSecToTime(elapsed),
                     averageSpeed: durationSec > 0 ? Math.floor(durationSec / elapsed) + 'x' : 'N/A',
