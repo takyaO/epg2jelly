@@ -1456,6 +1456,7 @@ function getCodecSpecificArgs(useCodec) {
             '-vf', 'format=nv12,hwupload=extra_hw_frames=64,deinterlace_qsv',
             '-r', '30000/1001',
             '-aspect', '16:9',
+            '-rc_mode', 'icq',
             '-preset', 'slow',
             '-global_quality', '23',
             '-profile:v', 'main'

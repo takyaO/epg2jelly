@@ -308,16 +308,32 @@ ass2vtt() {
                 ./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {
                     echo "Warning: enc.js failed in trim mode. Falling back to safe mode..." >&2
                     notify 3 "Warning: enc.js failed in trim mode, falling back: $FILENAME"
-
-                    ./enc.js --safe-mode "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {		    
-                        echo "Warning: enc.js failed in fallback safe mode" >&2
-                        notify 3 "Warning: enc.js failed in fallback safe mode: $FILENAME"
-
-			./enc.js "$TARGET_TS" epg.json chap_out.txt  || {		    
-                            echo "Error: enc.js failed in fallback normal mode" >&2
-                            notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
-			}
-                    }
+		    if [ $chkdrp_status -eq 0 ]; then
+			echo "Running tsreadex to clean streams..."
+			CLEANED_TS="${FILE}"
+			tsreadex -x 18/38/39 -n -1 -a 13 -b 5 -c 1 -u 1 "$TARGET_TS" > "$CLEANED_TS"
+			if [ $? -eq 0 ] && [ -s "$CLEANED_TS" ]; then
+			    TARGET_TS="$CLEANED_TS"
+			    echo "tsreadex completed. Using cleaned TS for Trim processing."
+			    ./enc.js "$TARGET_TS" epg.json chap_out.txt jls_out.txt || {		    
+				echo "Warning: enc.js failed in fallback mode" >&2
+				notify 3 "Warning: enc.js failed in fallback mode: $FILENAME"
+				./enc.js "$TARGET_TS" epg.json chap_out.txt  || {		    
+				    echo "Error: enc.js failed in fallback normal mode" >&2
+				    notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+				}
+			    }
+			else
+			    echo "Warning: tsreadex failed or output empty. Falling back to original TS."
+			    notify 4 "Error: tsreadex failed: $FILENAME"
+			    rm -f "$CLEANED_TS"
+			    CLEANED_TS=""
+			    ./enc.js "$TARGET_TS" epg.json chap_out.txt  || {		    
+				echo "Error: enc.js failed in fallback normal mode" >&2
+				notify 4 "Error: enc.js failed in fallback normal mode: $FILENAME"
+			    }
+			fi
+		    fi
                 }
             else
                 notify 4 "Error: jls failed: $FILENAME"
@@ -419,4 +435,4 @@ ass2vtt() {
 done
 # https://note.com/leal_walrus5520/n/n98e738cae3b4
 # https://note.com/leal_walrus5520/n/n8ae31f665314
-# Time stamp: 2026/10/04
+# Time stamp: 2026/11/02
