@@ -905,7 +905,7 @@ function getAudioArgs(audioCodec) {
     }
 
     console.log('Audio tags found in filename, mapping all audio streams');
-    const languageMap = determineAudioLanguages(audioStreams, fileName);
+    const languageMap = determineAudioLanguages(audioStreams, fileName, metadataDescription);
     let audioIndex = 0;
     for (const stream of audioStreams) {
         args.push('-map', `0:${stream.index}?`);
@@ -928,7 +928,7 @@ const LANGUAGE_KEYWORDS = [
     { code: 'deu', patterns: [/ger/i, /german/i, /deu/i, /ドイツ/, /独/] },
 ];
 
-function determineAudioLanguages(audioStreams, fileName) {
+function determineAudioLanguages(audioStreams, fileName, description = '') {
     const isBilingual = /\[二\]/.test(fileName);
     const isExplanation = /\[解\]/.test(fileName);
     const isMultiAudio = /\[多\]/.test(fileName);
@@ -966,8 +966,12 @@ function determineAudioLanguages(audioStreams, fileName) {
             if (mainStream) languageMap[mainStream.index] = 'jpn';
             if (secondaryStream && secondaryStream !== mainStream) {
                 const inferredFromFileName = detectLanguage(fileName);
+                const inferredFromDescription = description && description.includes('韓') ? 'kor' : null;
                 const defaultSecondaryLanguage = isBilingual ? 'eng' : 'jpn';
-                languageMap[secondaryStream.index] = inferredFromFileName || defaultSecondaryLanguage;
+                languageMap[secondaryStream.index] = inferredFromDescription || inferredFromFileName || defaultSecondaryLanguage;
+                if (inferredFromDescription) {
+                    console.log(`Inferred secondary audio language from metadata description: ${inferredFromDescription}`);
+                }
             }
         } else {
             for (const stream of untaggedStreams) {
@@ -1590,7 +1594,7 @@ function getCodecSpecificArgs(useCodec) {
 
                 // 音声ストリーム情報を取得
                 const audioStreams = getAudioStreamDetails(inputFile);
-                const languageMap = determineAudioLanguages(audioStreams, inputFileName);
+                const languageMap = determineAudioLanguages(audioStreams, inputFileName, metadataDescription);
 
                 // 音声メタデータ配列を構築
                 const audioMetadata = [];
